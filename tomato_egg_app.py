@@ -115,6 +115,9 @@ if mode == "番茄炒蛋計算練習":
 # -----------------------------
 # 五、隨機菜單 練習頁面（從 Excel 讀）
 # -----------------------------
+# -----------------------------
+# 五、隨機菜單 練習頁面（從 Excel 讀）
+# -----------------------------
 else:
     st.title("隨機菜單碳足跡練習（從 Excel 讀取產品）")
 
@@ -128,63 +131,114 @@ else:
 
     st.markdown(
         """
-這個練習會：
+這個練習會：  
 1. 從 **產品碳足跡 Excel** 中隨機抽幾個商品，組成一份「菜單」  
-2. 你先估算這一餐的 **總碳足跡 (kgCO₂e)**  
-3. 再按按鈕查看系統計算結果與拆解
+2. 顯示每個商品 **每份碳足跡 (kgCO₂e)** 和 **本題吃幾份**  
+3. 你先用這些數字自己計算一餐的 **總碳足跡**，再輸入答案  
+4. 按按鈕查看系統計算結果與拆解
         """
     )
 
     # 用 session_state 記住這次抽到的菜單
-    if "menu_indices" not in st.session_state:
-        st.session_state.menu_indices = []
+    if "menu_df" not in st.session_state:
+        st.session_state.menu_df = None
 
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         if st.button("抽一份新的隨機菜單"):
             # 一次抽 3 個商品（你可以自己改數量）
-            n_items = 3
-            n_items = min(n_items, len(df))
-            st.session_state.menu_indices = random.sample(range(len(df)), n_items)
+            n_items = min(3, len(df))
+            idx = random.sample(range(len(df)), n_items)
+
+            menu_df = df.loc[
+                idx,
+                ["product_name", "declared_unit", "cf_per_pack_kg"],
+            ].copy()
+
+            # 隨機決定這一題要吃幾「份」
+            possible_servings = [0.5, 1, 2, 3]
+            menu_df["servings"] = [
+                random.choice(possible_servings) for _ in range(len(menu_df))
+            ]
+
+            # 這一題每個商品實際產生的碳足跡
+            menu_df["cf_this_item_kg"] = (
+                menu_df["cf_per_pack_kg"] * menu_df["servings"]
+            )
+
+            st.session_state.menu_df = menu_df
 
     with col_btn2:
         if st.button("清空菜單"):
-            st.session_state.menu_indices = []
+            st.session_state.menu_df = None
 
-    if not st.session_state.menu_indices:
+    if st.session_state.menu_df is None:
         st.info("請先按「抽一份新的隨機菜單」。")
         st.stop()
 
-    # 取出這次的菜單
-    menu_df = df.loc[
-        st.session_state.menu_indices,
-        ["product_name", "declared_unit", "cf_per_pack_kg"],
-    ].reset_index(drop=True)
+    menu_df = st.session_state.menu_df
 
-    st.subheader("本次隨機菜單（每項 1 份）")
-    st.table(menu_df[["product_name", "declared_unit"]])
+    st.subheader("本次隨機菜單（每項吃幾份）")
 
-    correct_total = float(menu_df["cf_per_pack_kg"].sum())
+    show_df = menu_df.copy()
+    show_df["cf_per_pack_kg"] = show_df["cf_per_pack_kg"].round(3)
+
+    show_df = show_df.rename(
+        columns={
+            "product_name": "產品名稱",
+            "declared_unit": "宣告單位",
+            "cf_per_pack_kg": "每份碳足跡 (kgCO₂e)",
+            "servings": "本題食用份數",
+        }
+    )
+
+    st.table(show_df[["產品名稱", "宣告單位", "每份碳足跡 (kgCO₂e)", "本題食用份數"]])
+
+    # 正確答案：所有商品這一題的碳足跡總和
+    correct_total = float(menu_df["cf_this_item_kg"].sum())
 
     st.markdown(
-        "👉 請先自己估算這一份菜單的 **總碳足跡 (kgCO₂e)**，再輸入在下面："
+        "👉 請用上面表格裡的數字，先自己計算這一份菜單的 **總碳足跡 (kgCO₂e)**，再輸入在下面："
     )
-    guess_menu = st.text_input("輸入你的估計值：", key="guess_menu")
+    guess_menu = st.text_input("輸入你算出的總碳足跡 (kgCO₂e)：", key="guess_menu")
 
     if st.button("顯示系統計算結果"):
         st.success(f"這份菜單的總碳足跡：約 **{correct_total:.3f} kgCO₂e**")
 
-        st.markdown("**各商品碳足跡拆解（每份）：**")
+        st.markdown("**各商品碳足跡拆解：**")
+        detail_df = menu_df.copy()
+        detail_df["cf_per_pack_kg"] = detail_df["cf_per_pack_kg"].round(3)
+        detail_df["cf_this_item_kg"] = detail_df["cf_this_item_kg"].round(3)
+
+        detail_df = detail_df.rename(
+            columns={
+                "product_name": "產品名稱",
+                "declared_unit": "宣告單位",
+                "cf_per_pack_kg": "每份碳足跡 (kgCO₂e)",
+                "servings": "本題食用份數",
+                "cf_this_item_kg": "本題此商品碳足跡 (kgCO₂e)",
+            }
+        )
+
         st.table(
-            menu_df.assign(
-                cf_per_pack_kg=lambda x: x["cf_per_pack_kg"].round(3)
-            )[["product_name", "declared_unit", "cf_per_pack_kg"]]
+            detail_df[
+                [
+                    "產品名稱",
+                    "宣告單位",
+                    "每份碳足跡 (kgCO₂e)",
+                    "本題食用份數",
+                    "本題此商品碳足跡 (kgCO₂e)",
+                ]
+            ]
         )
 
         if guess_menu.strip():
             try:
                 g = float(guess_menu)
                 diff = abs(g - correct_total)
-                st.info(f"你的估計：`{g:.3f}`，與正確值差 **{diff:.3f}** kgCO₂e。")
+                st.info(f"你的答案：`{g:.3f}`，與正確值差 **{diff:.3f}** kgCO₂e。")
             except ValueError:
-                st.error("你的估計值不是數字，請重新輸入，例如 `1.234`。")
+                st.error("你的答案不是數字，請重新輸入，例如 `1.234`。")
+
+  
+

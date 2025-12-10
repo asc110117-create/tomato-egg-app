@@ -1,22 +1,21 @@
 import streamlit as st
 import pandas as pd
 import random
-from pathlib import Path
 
 st.set_page_config(
-    page_title="番茄炒蛋 & 隨機菜單碳足跡練習",
-    page_icon="🥚",
+    page_title="隨機菜單 & 料理方式碳足跡練習",
+    page_icon="🍚",
 )
 
 # -----------------------------
 # 一、讀取 Excel：產品碳足跡資料
 # -----------------------------
 @st.cache_data
-def load_cf_products(path: str = "產品碳足跡.xlsx") -> pd.DataFrame:
+def load_cf_products(path: str = "產品碳足跡2.xlsx") -> pd.DataFrame:
     df = pd.read_excel(path)
 
     def parse_cf(value):
-        """把 '450.00g' / '1.00kg' 轉成 kgCO2e（float）"""
+        """把 '450.00g' / '1.00kg' 轉成 kgCO₂e（float）"""
         if isinstance(value, str):
             v = value.strip().lower()
             if v.endswith("kg"):
@@ -31,214 +30,170 @@ def load_cf_products(path: str = "產品碳足跡.xlsx") -> pd.DataFrame:
 
 
 # -----------------------------
-# 二、番茄炒蛋碳足跡計算
+# 二、載入資料 & 分群
 # -----------------------------
-EF_EGG = 0.162        # 雞蛋排放係數 kgCO2e / kg
-EF_TOMATO = 0.50      # 番茄排放係數 kgCO2e / kg（示意）
-COOKING_FACTOR = 1.2  # 炒的倍數
-EF_SCOOTER = 0.08     # 機車排放係數 kgCO2e / km（示意）
+try:
+    df = load_cf_products()
+except Exception as e:
+    st.error("讀取 `產品碳足跡2.xlsx` 失敗，請確認檔案有放在 repo 根目錄。")
+    st.exception(e)
+    st.stop()
 
-def calc_tomato_egg(egg_g, tomato_g, distance_km):
-    # 食材排放
-    food_emission = EF_EGG * (egg_g / 1000) + EF_TOMATO * (tomato_g / 1000)
-    # 炒的烹調排放
-    food_with_cooking = food_emission * COOKING_FACTOR
-    # 機車來回路程（單趟 distance_km，來回乘 2）
-    transport_emission = distance_km * 2 * EF_SCOOTER
-    # 總排放
-    total = food_with_cooking + transport_emission
-    return total, food_with_cooking, transport_emission
+# A欄 = Unnamed: 0
+base_df = df[df["Unnamed: 0"] == 1]        # 食材
+oil_df = df[df["Unnamed: 0"] == "1-1"]     # 油品
+water_df = df[df["Unnamed: 0"] == "1-2"]   # 水 / 湯底
 
 
 # -----------------------------
-# 三、側邊欄：選擇模式
+# 三、UI：說明
 # -----------------------------
-mode = st.sidebar.radio(
-    "選擇練習模式",
-    ["番茄炒蛋計算練習", "隨機菜單練習（從 Excel）"],
+st.title("隨機菜單 + 料理方式碳足跡練習")
+
+st.markdown(
+    """
+### 練習規則說明
+
+1. 系統會從 **A欄=1 的食材群** 隨機抽出三種食材  
+2. 每一個食材，你要選擇 **「煎」** 或 **「水煮」**  
+3. 如果選擇：
+   - **煎**：系統會從 **A欄 = 1-1（油品）** 隨機抽一種油品  
+   - **水煮**：系統會從 **A欄 = 1-2（水）** 隨機抽一種產品  
+4. 最後系統會計算：  
+   **這三個食材 + 對應油品/水 的碳足跡總和 (kgCO₂e)**  
+    """
 )
 
-# -----------------------------
-# 四、番茄炒蛋 練習頁面
-# -----------------------------
-if mode == "番茄炒蛋計算練習":
-    st.title("番茄炒蛋碳足跡計算練習")
-
-    st.subheader("情境說明")
-    st.markdown(
-        f"""
-- 雞蛋排放係數：`{EF_EGG:.3f} kgCO₂e / kg`
-- 番茄排放係數：`{EF_TOMATO:.2f} kgCO₂e / kg`（示意用）
-- 烹調方式：炒（倍數 `{COOKING_FACTOR}`）
-- 機車排放係數：`{EF_SCOOTER:.2f} kgCO₂e / km`
-- 預設來回騎車買菜
-        """
-    )
-
-    st.markdown("### 請輸入你這份番茄炒蛋的設定")
-
-    egg_g = st.number_input("雞蛋總重量 (g)", min_value=0.0, value=20.0, step=5.0)
-    tomato_g = st.number_input("番茄重量 (g)", min_value=0.0, value=30.0, step=5.0)
-    distance_km = st.number_input("去買菜的單程距離 (km)", min_value=0.0, value=6.0, step=0.5)
-
-    st.markdown(
-        "👉 請自己先算一算，輸入你估計的 **總碳足跡**（kgCO₂e），例如 `0.589`："
-    )
-    guess = st.text_input("輸入你的估計值：", key="guess_tomato_egg")
-
-    if st.button("顯示系統計算結果"):
-        total, food_with_cooking, transport_emission = calc_tomato_egg(
-            egg_g, tomato_g, distance_km
-        )
-
-        st.success(f"系統計算結果：**{total:.3f} kgCO₂e**")
-
-        st.markdown(
-            f"""
-**拆解說明：**
-
-- 食材 + 烹調碳足跡：`{food_with_cooking:.3f} kgCO₂e`
-- 交通碳足跡（機車來回）：`{transport_emission:.3f} kgCO₂e`
-- 總碳足跡：`{total:.3f} kgCO₂e`
-            """
-        )
-
-        if guess.strip():
-            try:
-                g = float(guess)
-                diff = abs(g - total)
-                st.info(f"你的估計：`{g:.3f}`，與正確值差 **{diff:.3f}** kgCO₂e。")
-            except ValueError:
-                st.error("你的估計值格式怪怪的，請確認是數字，例如 `0.589`。")
-
 
 # -----------------------------
-# 五、隨機菜單 練習頁面（從 Excel 讀）
+# 四、隨機抽三個食材（A欄 = 1）
 # -----------------------------
-# -----------------------------
-# 五、隨機菜單 練習頁面（從 Excel 讀）
-# -----------------------------
-else:
-    st.title("隨機菜單碳足跡練習（從 Excel 讀取產品）")
+if "ingredients_indices" not in st.session_state:
+    st.session_state.ingredients_indices = []
 
-    # 讀 Excel（放在同一個 GitHub repo 目錄）
-    try:
-        df = load_cf_products()
-    except Exception as e:
-        st.error("讀取 `產品碳足跡.xlsx` 失敗，請確認檔案有放在 repo 根目錄。")
-        st.exception(e)
-        st.stop()
-
-    st.markdown(
-        """
-這個練習會：  
-1. 從 **產品碳足跡 Excel** 中隨機抽幾個商品，組成一份「菜單」  
-2. 顯示每個商品 **每份碳足跡 (kgCO₂e)** 和 **本題吃幾份**  
-3. 你先用這些數字自己計算一餐的 **總碳足跡**，再輸入答案  
-4. 按按鈕查看系統計算結果與拆解
-        """
-    )
-
-    # 用 session_state 記住這次抽到的菜單
-    if "menu_df" not in st.session_state:
-        st.session_state.menu_df = None
-
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        if st.button("抽一份新的隨機菜單"):
-            # 一次抽 3 個商品（你可以自己改數量）
-            n_items = min(3, len(df))
-            idx = random.sample(range(len(df)), n_items)
-
-            menu_df = df.loc[
-                idx,
-                ["product_name", "declared_unit", "cf_per_pack_kg"],
-            ].copy()
-
-            # 隨機決定這一題要吃幾「份」
-            possible_servings = [0.5, 1, 2, 3]
-            menu_df["servings"] = [
-                random.choice(possible_servings) for _ in range(len(menu_df))
-            ]
-
-            # 這一題每個商品實際產生的碳足跡
-            menu_df["cf_this_item_kg"] = (
-                menu_df["cf_per_pack_kg"] * menu_df["servings"]
+col_btn1, col_btn2 = st.columns(2)
+with col_btn1:
+    if st.button("🎲 抽三種隨機食材"):
+        if len(base_df) == 0:
+            st.error("找不到 A欄=1 的食材資料。")
+        else:
+            n_items = min(3, len(base_df))
+            st.session_state.ingredients_indices = random.sample(
+                list(base_df.index), n_items
             )
 
-            st.session_state.menu_df = menu_df
+with col_btn2:
+    if st.button("🧹 清空重來"):
+        st.session_state.ingredients_indices = []
+        # 同時把料理方式的 state 也清空
+        for i in range(3):
+            st.session_state.pop(f"method_{i}", None)
 
-    with col_btn2:
-        if st.button("清空菜單"):
-            st.session_state.menu_df = None
+if not st.session_state.ingredients_indices:
+    st.info("請先按「🎲 抽三種隨機食材」。")
+    st.stop()
 
-    if st.session_state.menu_df is None:
-        st.info("請先按「抽一份新的隨機菜單」。")
-        st.stop()
 
-    menu_df = st.session_state.menu_df
+st.subheader("本次抽出的食材（A欄 = 1）")
 
-    st.subheader("本次隨機菜單（每項吃幾份）")
+# -----------------------------
+# 五、顯示食材 + 料理方式選擇
+# -----------------------------
+ingredients_rows = base_df.loc[st.session_state.ingredients_indices]
 
-    show_df = menu_df.copy()
-    show_df["cf_per_pack_kg"] = show_df["cf_per_pack_kg"].round(3)
+method_options = ["請選擇", "煎", "水煮"]
 
-    show_df = show_df.rename(
-        columns={
-            "product_name": "產品名稱",
-            "declared_unit": "宣告單位",
-            "cf_per_pack_kg": "每份碳足跡 (kgCO₂e)",
-            "servings": "本題食用份數",
-        }
-    )
+for i, (idx, row) in enumerate(ingredients_rows.iterrows()):
+    st.markdown("---")
+    col1, col2 = st.columns([2, 1])
 
-    st.table(show_df[["產品名稱", "宣告單位", "每份碳足跡 (kgCO₂e)", "本題食用份數"]])
+    with col1:
+        st.markdown(
+            f"""
+**食材 {i+1}：**  
+- 名稱：`{row['product_name']}`  
+- 宣告單位：`{row['declared_unit']}`  
+- 碳足跡（每單位）：`{row['cf_per_pack_kg']:.3f} kgCO₂e`
+"""
+        )
 
-    # 正確答案：所有商品這一題的碳足跡總和
-    correct_total = float(menu_df["cf_this_item_kg"].sum())
+    with col2:
+        st.selectbox(
+            f"料理方式（食材 {i+1}）",
+            method_options,
+            key=f"method_{i}",
+        )
 
-    st.markdown(
-        "👉 請用上面表格裡的數字，先自己計算這一份菜單的 **總碳足跡 (kgCO₂e)**，再輸入在下面："
-    )
-    guess_menu = st.text_input("輸入你算出的總碳足跡 (kgCO₂e)：", key="guess_menu")
+st.markdown("---")
 
-    if st.button("顯示系統計算結果"):
-        st.success(f"這份菜單的總碳足跡：約 **{correct_total:.3f} kgCO₂e**")
+# -----------------------------
+# 六、依料理方式抽 1-1 / 1-2，並計算總碳足跡
+# -----------------------------
+if st.button("📊 根據料理方式抽油 / 水，並計算碳足跡"):
+    rows_for_table = []
+    total_cf = 0.0
 
-        st.markdown("**各商品碳足跡拆解：**")
-        detail_df = menu_df.copy()
-        detail_df["cf_per_pack_kg"] = detail_df["cf_per_pack_kg"].round(3)
-        detail_df["cf_this_item_kg"] = detail_df["cf_this_item_kg"].round(3)
+    if len(oil_df) == 0:
+        st.warning("注意：A欄=1-1（油品） 沒有資料。")
+    if len(water_df) == 0:
+        st.warning("注意：A欄=1-2（水） 沒有資料。")
 
-        detail_df = detail_df.rename(
-            columns={
-                "product_name": "產品名稱",
-                "declared_unit": "宣告單位",
-                "cf_per_pack_kg": "每份碳足跡 (kgCO₂e)",
-                "servings": "本題食用份數",
-                "cf_this_item_kg": "本題此商品碳足跡 (kgCO₂e)",
+    for i, (idx, row) in enumerate(ingredients_rows.iterrows()):
+        method = st.session_state.get(f"method_{i}", "請選擇")
+        ingredient_name = row["product_name"]
+        ingredient_unit = row["declared_unit"]
+        ingredient_cf = float(row["cf_per_pack_kg"])
+
+        cooking_name = "-"
+        cooking_unit = "-"
+        cooking_cf = 0.0
+
+        # 料理方式判斷
+        if method == "煎":
+            if len(oil_df) > 0:
+                oil_row = oil_df.sample(1).iloc[0]
+                cooking_name = oil_row["product_name"]
+                cooking_unit = oil_row["declared_unit"]
+                cooking_cf = float(oil_row["cf_per_pack_kg"])
+            else:
+                st.warning(f"食材 {i+1} 選了「煎」，但找不到 1-1 油品資料。")
+        elif method == "水煮":
+            if len(water_df) > 0:
+                water_row = water_df.sample(1).iloc[0]
+                cooking_name = water_row["product_name"]
+                cooking_unit = water_row["declared_unit"]
+                cooking_cf = float(water_row["cf_per_pack_kg"])
+            else:
+                st.warning(f"食材 {i+1} 選了「水煮」，但找不到 1-2 水類資料。")
+        else:
+            # 未選擇
+            st.warning(f"食材 {i+1} 尚未選擇料理方式，將不列入計算。")
+            # 不計這一項
+            continue
+
+        # 加總碳足跡
+        subtotal = ingredient_cf + cooking_cf
+        total_cf += subtotal
+
+        rows_for_table.append(
+            {
+                "食材名稱": ingredient_name,
+                "食材宣告單位": ingredient_unit,
+                "食材碳足跡(kgCO₂e/份)": round(ingredient_cf, 3),
+                "料理方式": method,
+                "搭配品名稱(油/水)": cooking_name,
+                "搭配品宣告單位": cooking_unit,
+                "搭配品碳足跡(kgCO₂e/份)": round(cooking_cf, 3),
+                "此組小計(食材+搭配品)": round(subtotal, 3),
             }
         )
 
-        st.table(
-            detail_df[
-                [
-                    "產品名稱",
-                    "宣告單位",
-                    "每份碳足跡 (kgCO₂e)",
-                    "本題食用份數",
-                    "本題此商品碳足跡 (kgCO₂e)",
-                ]
-            ]
-        )
+    if not rows_for_table:
+        st.error("目前沒有任何完成設定（有選料理方式）的食材，無法計算。")
+        st.stop()
 
-        if guess_menu.strip():
-            try:
-                g = float(guess_menu)
-                diff = abs(g - correct_total)
-                st.info(f"你的答案：`{g:.3f}`，與正確值差 **{diff:.3f}** kgCO₂e。")
-            except ValueError:
-                st.error("你的答案不是數字，請重新輸入，例如 `1.234`。")
+    result_df = pd.DataFrame(rows_for_table)
+    st.subheader("本次餐點碳足跡明細")
+    st.table(result_df)
 
-  
-
+    st.success(f"👉 這一組餐點的總碳足跡：約 **{total_cf:.3f} kgCO₂e**（食材 + 油/水）")

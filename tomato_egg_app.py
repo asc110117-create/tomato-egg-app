@@ -11,8 +11,8 @@ st.set_page_config(
 # 一、讀取 Excel：產品碳足跡2
 # -----------------------------
 @st.cache_data
-def load_cf_products(path: str = "產品碳足跡2.xlsx") -> pd.DataFrame:
-    """讀取產品碳足跡2.xlsx，並把碳足跡欄位轉成 kgCO2e（float）"""
+def load_cf_products(path: str = "產品碳足跡3.xlsx") -> pd.DataFrame:
+    """讀取產品碳足跡3.xlsx，並把碳足跡欄位轉成 kgCO2e（float）"""
 
     df = pd.read_excel(path)
 
@@ -204,3 +204,4 @@ def sample_ingredients(df_food: pd.DataFrame, name_col: str, unit_col: str):
 
 if __name__ == "__main__":
     main()
+

@@ -1,292 +1,312 @@
-import re
-import random
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import random
+import re
+import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="一餐的碳足跡大冒險：從農場到你的胃", page_icon="🍽️", layout="wide")
 
 EXCEL_PATH = "產品碳足跡3.xlsx"
 
 # -----------------------------
-# 讀檔 + 解析碳足跡（g/kg -> kg）
+# 讀檔 + 碳足跡欄位轉成 kgCO2e（float）
 # -----------------------------
 @st.cache_data
-def load_products(path: str) -> pd.DataFrame:
+def load_data(path: str = EXCEL_PATH) -> pd.DataFrame:
     df = pd.read_excel(path)
 
-    # 兼容第一欄可能叫 Unnamed: 0
-    first_col = df.columns[0]
-    df = df.rename(columns={first_col: "code"})
-    df["code"] = df["code"].astype(str).str.strip()
+    # 統一欄名
+    df = df.rename(columns={"Unnamed: 0": "code"})
+    for c in ["product_name", "product_carbon_footprint_data", "declared_unit"]:
+        if c not in df.columns:
+            raise ValueError(f"Excel 缺少欄位：{c}")
 
-    def parse_cf_to_kg(v):
+    def parse_cf_to_kg(value):
         """
-        將 '900.00g' / '1.00kg' 轉成 kgCO2e (float)
+        把 '450.00g' / '1.00kg' / 數字 轉成 kgCO2e(float)
         """
-        if pd.isna(v):
+        if pd.isna(value):
             return None
-        if isinstance(v, (int, float)):
-            return float(v)  # 視為 kg
-        s = str(v).strip().lower().replace(" ", "")
-        # 常見格式：900.00g / 1.00kg
-        if s.endswith("kg"):
-            return float(s[:-2])
-        if s.endswith("g"):
-            return float(s[:-1]) / 1000.0
-        # 其他：嘗試抓數字
-        m = re.search(r"[-+]?\d*\.?\d+", s)
-        return float(m.group()) if m else None
+        if isinstance(value, (int, float)):
+            return float(value)
 
-    df["cf_kg"] = df["product_carbon_footprint_data"].apply(parse_cf_to_kg)
+        v = str(value).strip().lower().replace(" ", "")
+        # 例：900.00g
+        if v.endswith("g"):
+            num = float(v[:-1])
+            return num / 1000.0
+        # 例：1.00kg
+        if v.endswith("kg"):
+            num = float(v[:-2])
+            return num
+        # 其他怪格式：盡量抓數字
+        m = re.search(r"(\d+(\.\d+)?)", v)
+        if m:
+            return float(m.group(1))
+        return None
 
-    # 只保留必要欄位
-    keep = ["code", "product_name", "product_carbon_footprint_data", "declared_unit", "cf_kg"]
-    df = df[keep].copy()
-
-    # 去掉 cf_kg 解析失敗的列（避免後面加總出錯）
-    df = df.dropna(subset=["cf_kg"]).reset_index(drop=True)
+    df["cf_kgco2e"] = df["product_carbon_footprint_data"].apply(parse_cf_to_kg)
     return df
 
 
-def pick_random_index(pool_df: pd.DataFrame) -> int:
-    return int(random.choice(pool_df.index.tolist()))
+def pick_random_rows(df: pd.DataFrame, code_value, n: int) -> pd.DataFrame:
+    pool = df[df["code"].astype(str) == str(code_value)].dropna(subset=["cf_kgco2e"])
+    if len(pool) == 0:
+        return pool
+    n = min(n, len(pool))
+    return pool.sample(n=n, replace=False, random_state=random.randint(1, 10**9))
 
 
-def build_drink_pool(df: pd.DataFrame) -> pd.DataFrame:
+def looks_like_beverage(name: str) -> bool:
     """
-    你說飲料先不分類，但要「隨機生成飲料」。
-    這裡用簡單規則：優先挑出看起來像飲品（含 ml/毫升/飲/茶/咖啡/水/氣泡 等）
-    並排除明顯酒類關鍵字。
+    飲料簡易判斷：含水/茶/咖啡/飲料/氣泡 等字；排除 酒/高粱 等
+    你之後也可以改成用 code 分類
     """
-    drink_like = df[df["code"].isin(["2", "2-1"])].copy()
-    if drink_like.empty:
-        # 若你的檔案飲料不在 2 / 2-1，就退回用全表關鍵字找
-        drink_like = df.copy()
-
-    text = (drink_like["product_name"].fillna("") + " " + drink_like["declared_unit"].fillna("")).str.lower()
-
-    include_kw = r"(ml|毫升|飲|茶|咖啡|水|氣泡|cola|coke|juice|milk|乳|豆漿|果汁)"
-    exclude_kw = r"(酒|高粱|威士忌|伏特加|啤|紅酒|白酒|紹興|烈酒|米酒)"
-
-    mask_inc = text.str.contains(include_kw, regex=True)
-    mask_exc = text.str.contains(exclude_kw, regex=True)
-
-    pool = drink_like[mask_inc & ~mask_exc].copy()
-    if pool.empty:
-        pool = drink_like[~mask_exc].copy()  # 至少排除酒
-    return pool.reset_index(drop=True)
+    if not isinstance(name, str):
+        return False
+    bad = ["酒", "高粱", "威士忌", "啤酒"]
+    if any(b in name for b in bad):
+        return False
+    good = ["水", "茶", "咖啡", "飲料", "氣泡", "可樂", "果汁", "豆漿", "牛奶"]
+    return any(g in name for g in good)
 
 
 # -----------------------------
 # 主程式
 # -----------------------------
 st.title("🍽️ 一餐的碳足跡大冒險：從農場到你的胃")
+st.caption("規則：編號 1 算食材；編號 1-1 / 1-2 算料理方式（油 / 水）。選項一改，表格與圖表會即時更新。")
 
 try:
-    df = load_products(EXCEL_PATH)
+    df = load_data(EXCEL_PATH)
 except Exception as e:
-    st.error(f"讀取 `{EXCEL_PATH}` 失敗：請確認它和 app.py 在同一個資料夾。")
+    st.error("讀取 Excel 失敗：請確認 `產品碳足跡3.xlsx` 放在專案根目錄，且欄位正確。")
     st.exception(e)
     st.stop()
 
-foods = df[df["code"] == "1"].copy().reset_index(drop=True)
-oils = df[df["code"] == "1-1"].copy().reset_index(drop=True)
-waters = df[df["code"] == "1-2"].copy().reset_index(drop=True)
-drink_pool = build_drink_pool(df)
+# 顯示檔案內有哪些 code
+with st.expander("（查看）這份 Excel 有哪些數字編號 code？"):
+    codes = sorted(df["code"].astype(str).unique().tolist())
+    st.write(codes)
 
-if foods.empty:
-    st.error("找不到編號 `1` 的食材資料。請確認 Excel 的編號欄位是否正確。")
-    st.stop()
+# 初始化 session
+if "ingredients" not in st.session_state:
+    st.session_state.ingredients = pd.DataFrame()
 
-if oils.empty:
-    st.warning("找不到編號 `1-1` 的油品資料（煎炸用）。選煎炸時將無法抽油品。")
-
-if waters.empty:
-    st.warning("找不到編號 `1-2` 的水資料（水煮用）。選水煮時將無法抽水。")
-
-
-# -----------------------------
-# Session state 初始化
-# -----------------------------
-if "food_rows" not in st.session_state:
-    st.session_state.food_rows = []         # 存 foods 的 row index（0..len(foods)-1）
-if "methods" not in st.session_state:
-    st.session_state.methods = {}           # key: i(0,1,2) -> "水煮"/"煎炸"
 if "addons" not in st.session_state:
-    st.session_state.addons = {}            # key: i -> dict{type, row, name, cf_kg, declared_unit}
-if "drink_choice" not in st.session_state:
-    st.session_state.drink_choice = "我不喝飲料"
-if "drink_row" not in st.session_state:
-    st.session_state.drink_row = None       # 存 drink_pool 的 row index
-
-
-def reroll_foods():
-    n = min(3, len(foods))
-    st.session_state.food_rows = random.sample(range(len(foods)), n)
-    st.session_state.methods = {}
+    # 每個食材對應一個 addon（油或水）
     st.session_state.addons = {}
-    st.session_state.drink_row = None
 
+if "drink" not in st.session_state:
+    st.session_state.drink = None
 
 # -----------------------------
-# UI：抽食材
+# Step 1：抽三個食材（code=1）
 # -----------------------------
-colA, colB = st.columns([1, 2])
-with colA:
-    if st.button("🎲 抽出 3 項食材（編號 1）", use_container_width=True):
-        reroll_foods()
+left, right = st.columns([1, 1])
 
-with colB:
-    st.caption("流程：先抽 3 項食材 → 每項選水煮/煎炸（系統自動抽水/油）→ 可選是否加飲料 → 產生整餐總碳足跡")
+with left:
+    st.subheader("Step 1｜抽三項食材（編號 1）")
 
-if not st.session_state.food_rows:
-    reroll_foods()
+    if st.button("🎲 重新隨機抽 3 個食材", use_container_width=True):
+        ing = pick_random_rows(df, 1, 3).reset_index(drop=True)
+        st.session_state.ingredients = ing
+        st.session_state.addons = {}   # 重抽就清掉料理配件
+        st.session_state.drink = None  # 重抽就清掉飲料
 
-picked_foods = foods.loc[st.session_state.food_rows].copy().reset_index(drop=True)
+    if st.session_state.ingredients is None or len(st.session_state.ingredients) == 0:
+        st.info("請先按「重新隨機抽 3 個食材」。")
+        st.stop()
 
-st.subheader("Step 1｜本次隨機食材（編號 1）")
-st.dataframe(
-    picked_foods.rename(columns={
+    ingredients = st.session_state.ingredients.copy()
+
+    # 食材表格（先只顯示食材）
+    show_ing = ingredients[["product_name", "product_carbon_footprint_data", "declared_unit", "cf_kgco2e"]].copy()
+    show_ing = show_ing.rename(columns={
         "product_name": "食材名稱",
+        "product_carbon_footprint_data": "碳足跡(原始格式)",
         "declared_unit": "宣告單位",
-        "product_carbon_footprint_data": "碳足跡原始值",
-        "cf_kg": "食材碳足跡(kgCO₂e)"
-    })[["食材名稱", "宣告單位", "碳足跡原始值", "食材碳足跡(kgCO₂e)"]],
-    use_container_width=True,
-    hide_index=True
-)
-
-# -----------------------------
-# UI：逐項料理選擇（分支跳題）
-# -----------------------------
-st.subheader("Step 2｜分別選擇料理方式（系統自動抽水/油，並顯示碳足跡）")
-
-def ensure_addon(i: int, method: str):
-    """
-    若使用者選了某方法，且該食材的 addon 尚未生成（或方法改變），就重新抽一次
-    """
-    prev = st.session_state.addons.get(i)
-    if prev and prev.get("method") == method:
-        return
-
-    if method == "煎炸":
-        if oils.empty:
-            st.session_state.addons[i] = {"method": method, "type": "油品", "name": "（無油品資料）", "cf_kg": 0.0, "declared_unit": ""}
-            return
-        row = pick_random_index(oils)
-        r = oils.loc[row]
-        st.session_state.addons[i] = {
-            "method": method, "type": "油品", "row": row,
-            "name": r["product_name"], "cf_kg": float(r["cf_kg"]), "declared_unit": str(r["declared_unit"])
-        }
-    else:  # 水煮
-        if waters.empty:
-            st.session_state.addons[i] = {"method": method, "type": "水", "name": "（無水資料）", "cf_kg": 0.0, "declared_unit": ""}
-            return
-        row = pick_random_index(waters)
-        r = waters.loc[row]
-        st.session_state.addons[i] = {
-            "method": method, "type": "水", "row": row,
-            "name": r["product_name"], "cf_kg": float(r["cf_kg"]), "declared_unit": str(r["declared_unit"])
-        }
-
-breakdown_rows = []
-
-for i in range(len(picked_foods)):
-    food = picked_foods.loc[i]
-    left, right = st.columns([1.2, 2])
-
-    with left:
-        st.markdown(f"**食材 {i+1}：{food['product_name']}**")
-        st.write(f"宣告單位：{food['declared_unit']}")
-        st.write(f"食材碳足跡：**{food['cf_kg']:.3f} kgCO₂e**")
-
-        default_method = st.session_state.methods.get(i, "水煮")
-        method = st.radio(
-            "料理方式",
-            ["水煮", "煎炸"],
-            index=0 if default_method == "水煮" else 1,
-            key=f"method_{i}",
-            horizontal=True,
-        )
-        st.session_state.methods[i] = method
-        ensure_addon(i, method)
-
-    with right:
-        addon = st.session_state.addons.get(i)
-        addon_cf = float(addon["cf_kg"]) if addon else 0.0
-        subtotal = float(food["cf_kg"]) + addon_cf
-
-        st.markdown("**系統隨機配對的料理材料（依你選的方式）**")
-        st.table(pd.DataFrame([{
-            "料理方式": method,
-            "配對類型": addon.get("type", ""),
-            "品名": addon.get("name", ""),
-            "宣告單位": addon.get("declared_unit", ""),
-            "碳足跡(kgCO₂e)": round(addon_cf, 3)
-        }]))
-
-        st.success(f"此食材小計（食材 + 料理材料）：**{subtotal:.3f} kgCO₂e**")
-
-    breakdown_rows.append({
-        "食材": food["product_name"],
-        "食材碳足跡(kgCO₂e)": float(food["cf_kg"]),
-        "料理方式": method,
-        "配對材料": addon.get("name", ""),
-        "配對材料碳足跡(kgCO₂e)": addon_cf,
-        "此食材小計(kgCO₂e)": subtotal
+        "cf_kgco2e": "碳足跡(kgCO₂e)"
     })
+    show_ing["碳足跡(kgCO₂e)"] = show_ing["碳足跡(kgCO₂e)"].round(3)
+
+    st.markdown("**本次食材（每項 1 份 / 依宣告單位）**")
+    st.dataframe(show_ing, use_container_width=True, hide_index=True)
 
 # -----------------------------
-# UI：飲料（兩選一）
+# Step 2：每個食材選料理方式（煎/炸 → 1-1；水煮 → 1-2）
 # -----------------------------
+with right:
+    st.subheader("Step 2｜分別選料理方式（會自動配油/水）")
+
+    oils_pool = df[df["code"].astype(str) == "1-1"].dropna(subset=["cf_kgco2e"])
+    waters_pool = df[df["code"].astype(str) == "1-2"].dropna(subset=["cf_kgco2e"])
+
+    if len(oils_pool) == 0 or len(waters_pool) == 0:
+        st.warning("找不到 1-1（油品）或 1-2（水品）資料，請檢查 Excel。")
+
+    # 逐一詢問三個食材
+    cooking_choices = []
+    for i, row in ingredients.reset_index(drop=True).iterrows():
+        st.markdown(f"### 食材 {i+1}")
+        st.write(f"**{row['product_name']}**（食材碳足跡：約 {row['cf_kgco2e']:.3f} kgCO₂e）")
+
+        method = st.radio(
+            f"這個食材要怎麼料理？",
+            ["水煮", "煎/炸"],
+            key=f"method_{i}",
+            horizontal=True
+        )
+
+        # 決定配件池
+        if method == "煎/炸":
+            pool = oils_pool
+            pool_code = "1-1"
+        else:
+            pool = waters_pool
+            pool_code = "1-2"
+
+        # 若尚未為該食材建立配件，或料理方式變了，就重新抽一個配件
+        prev = st.session_state.addons.get(i)
+        need_new = (
+            prev is None
+            or prev.get("pool_code") != pool_code
+        )
+        if need_new and len(pool) > 0:
+            addon_row = pool.sample(1, random_state=random.randint(1, 10**9)).iloc[0].to_dict()
+            st.session_state.addons[i] = {
+                "pool_code": pool_code,
+                "product_name": addon_row["product_name"],
+                "product_carbon_footprint_data": addon_row["product_carbon_footprint_data"],
+                "declared_unit": addon_row["declared_unit"],
+                "cf_kgco2e": float(addon_row["cf_kgco2e"]),
+            }
+
+        addon = st.session_state.addons.get(i)
+        if addon:
+            tag = "油品(1-1)" if addon["pool_code"] == "1-1" else "水品(1-2)"
+            st.info(
+                f"系統配對的{tag}：**{addon['product_name']}**｜"
+                f"{addon['product_carbon_footprint_data']}｜{addon['declared_unit']}｜"
+                f"≈ {addon['cf_kgco2e']:.3f} kgCO₂e"
+            )
+
+        cooking_choices.append(method)
+
+# -----------------------------
+# Step 3：飲料（隨機生成 / 不喝）
+# -----------------------------
+st.divider()
 st.subheader("Step 3｜飲料（兩個選項）")
 
-drink_choice = st.radio("你要不要喝飲料？", ["隨機生成飲料", "我不喝飲料"], horizontal=True)
-st.session_state.drink_choice = drink_choice
+drink_col1, drink_col2 = st.columns([1, 2])
 
-drink_cf = 0.0
-drink_name = ""
-drink_unit = ""
+with drink_col1:
+    drink_choice = st.radio("你要喝飲料嗎？", ["隨機生成飲料", "我不喝飲料"], horizontal=True)
 
-if drink_choice == "隨機生成飲料":
-    if drink_pool.empty:
-        st.warning("目前找不到可用的飲料資料（會自動當作不加飲料）。")
+with drink_col2:
+    if drink_choice == "我不喝飲料":
+        st.session_state.drink = {"name": "不喝飲料", "cf_kgco2e": 0.0, "unit": "-"}
+        st.success("已選擇：不喝飲料（0）")
     else:
-        if st.session_state.drink_row is None:
-            st.session_state.drink_row = random.randrange(len(drink_pool))
-        d = drink_pool.loc[st.session_state.drink_row]
-        drink_cf = float(d["cf_kg"])
-        drink_name = d["product_name"]
-        drink_unit = d["declared_unit"]
+        # 從整份表中挑看起來像飲料的
+        bev_pool = df[df["product_name"].apply(looks_like_beverage)].dropna(subset=["cf_kgco2e"])
+        if len(bev_pool) == 0:
+            st.warning("資料中找不到像飲料的項目（目前用關鍵字判斷），你可以指定飲料用哪個 code，我再幫你改。")
+            st.session_state.drink = {"name": "（無可用飲料）", "cf_kgco2e": 0.0, "unit": "-"}
+        else:
+            if st.button("🥤 重新抽一個飲料"):
+                d = bev_pool.sample(1, random_state=random.randint(1, 10**9)).iloc[0]
+                st.session_state.drink = {
+                    "name": d["product_name"],
+                    "cf_kgco2e": float(d["cf_kgco2e"]),
+                    "unit": d["declared_unit"]
+                }
 
-        st.table(pd.DataFrame([{
-            "飲料": drink_name,
-            "宣告單位": drink_unit,
-            "飲料碳足跡(kgCO₂e)": round(drink_cf, 3)
-        }]))
+            if st.session_state.drink is None:
+                # 第一次自動抽一杯
+                d = bev_pool.sample(1, random_state=random.randint(1, 10**9)).iloc[0]
+                st.session_state.drink = {
+                    "name": d["product_name"],
+                    "cf_kgco2e": float(d["cf_kgco2e"]),
+                    "unit": d["declared_unit"]
+                }
 
-        if st.button("🔁 重新抽一杯飲料"):
-            st.session_state.drink_row = random.randrange(len(drink_pool))
-            st.rerun()
-else:
-    st.session_state.drink_row = None
-    st.info("本餐不加飲料。")
+            st.success(
+                f"本次飲料：**{st.session_state.drink['name']}**｜"
+                f"{st.session_state.drink['unit']}｜"
+                f"≈ {st.session_state.drink['cf_kgco2e']:.3f} kgCO₂e"
+            )
 
 # -----------------------------
-# Step 4：總結
+# Step 4：彙整表格 + 總碳足跡 + 圖表（即時更新）
 # -----------------------------
-st.subheader("Step 4｜整餐碳足跡總結")
+st.divider()
+st.subheader("Step 4｜彙整與即時圖表")
 
-breakdown_df = pd.DataFrame(breakdown_rows)
-foods_total = float(breakdown_df["此食材小計(kgCO₂e)"].sum())
-grand_total = foods_total + drink_cf
+rows = []
+sum_food = 0.0
+sum_addon = 0.0
 
-st.dataframe(breakdown_df, use_container_width=True, hide_index=True)
+for i, ing in ingredients.reset_index(drop=True).iterrows():
+    ing_cf = float(ing["cf_kgco2e"])
+    addon = st.session_state.addons.get(i)
+    addon_cf = float(addon["cf_kgco2e"]) if addon else 0.0
+    method = st.session_state.get(f"method_{i}", "水煮")
 
-c1, c2, c3 = st.columns(3)
-c1.metric("三項食材合計", f"{foods_total:.3f} kgCO₂e")
-c2.metric("飲料", f"{drink_cf:.3f} kgCO₂e")
-c3.metric("整餐總碳足跡", f"{grand_total:.3f} kgCO₂e")
+    rows.append({
+        "食材": ing["product_name"],
+        "食材碳足跡(kgCO₂e)": round(ing_cf, 3),
+        "料理方式": method,
+        "配對油/水": addon["product_name"] if addon else "-",
+        "油/水碳足跡(kgCO₂e)": round(addon_cf, 3),
+        "小計(kgCO₂e)": round(ing_cf + addon_cf, 3),
+        "宣告單位(食材)": ing["declared_unit"],
+        "宣告單位(油/水)": addon["declared_unit"] if addon else "-"
+    })
 
-st.caption("註：本工具以 Excel 內的產品宣告單位碳足跡為主（每項視為 1 份）；水/油為料理方式的配對材料，由系統隨機抽取後加入加總。")
+    sum_food += ing_cf
+    sum_addon += addon_cf
+
+drink = st.session_state.drink or {"name": "不喝飲料", "cf_kgco2e": 0.0, "unit": "-"}
+sum_drink = float(drink["cf_kgco2e"])
+total = sum_food + sum_addon + sum_drink
+
+summary_df = pd.DataFrame(rows)
+
+st.markdown("### ✅ 本餐明細（會隨你的選項即時更新）")
+st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+st.markdown("### ✅ 總碳足跡")
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("食材合計", f"{sum_food:.3f} kgCO₂e")
+m2.metric("料理方式（油/水）合計", f"{sum_addon:.3f} kgCO₂e")
+m3.metric("飲料", f"{sum_drink:.3f} kgCO₂e")
+m4.metric("本餐總計", f"{total:.3f} kgCO₂e")
+
+# -----------------------------
+# 圖表：圓餅圖 + 長條圖
+# -----------------------------
+chart_left, chart_right = st.columns(2)
+
+with chart_left:
+    st.markdown("### 圓餅圖｜食材 vs 料理 vs 飲料")
+    fig1 = plt.figure()
+    parts = [sum_food, sum_addon, sum_drink]
+    labels = ["食材", "料理（油/水）", "飲料"]
+    # 避免全 0 報錯
+    if sum(parts) == 0:
+        plt.text(0.5, 0.5, "目前總量為 0", ha="center", va="center")
+        plt.axis("off")
+    else:
+        plt.pie(parts, labels=labels, autopct="%1.1f%%")
+    st.pyplot(fig1, clear_figure=True)
+
+with chart_right:
+    st.markdown("### 長條圖｜三個食材的小計")
+    fig2 = plt.figure()
+    x = [f"食材{i+1}" for i in range(len(summary_df))]
+    y = summary_df["小計(kgCO₂e)"].tolist()
+    plt.bar(x, y)
+    plt.ylabel("kgCO₂e")
+    st.pyplot(fig2, clear_figure=True)

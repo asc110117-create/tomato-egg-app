@@ -1,9 +1,9 @@
 # app.py（完整：食材 + 料理 + 飲料 + 採買交通 + 長條圖/圓餅圖）
-# ✅ 修正 StreamlitAPIException：有 key 的 widget 不再手動寫回同 key 的 session_state
+# ✅ 修正1：streamlit_geolocation() 只呼叫一次（避免 DuplicateElementKey）
+# ✅ 修正2：有 key 的 widget 不再手動寫回同 key 的 session_state（避免 StreamlitAPIException）
 # ✅ 交通方式：走路/機車/汽車（顯示來回）
-# ✅ 搜尋店名（例如全聯）→ 只找定位附近 → 最近 5 家（1~5）→ 使用者做決策 → 確認才加入
+# ✅ 搜尋店名 → 只找定位附近 → 最近 5 家（1~5）→ 使用者做決策 → 確認才加入
 # ✅ 圖表：長條圖 + 圓餅圖（Altair）
-# ✅ Excel：取前 4 欄（編號/品名/碳足跡/宣告單位），code 強制字串化避免 sample 篩不到
 
 import re
 import random
@@ -61,15 +61,13 @@ VALID_IDS = {
 def parse_cf_to_kg(value) -> float:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return float("nan")
-
     if isinstance(value, (int, float)):
         return float(value)
 
     s = str(value).strip().lower().replace(" ", "")
     s = s.replace("kgco2e", "kg").replace("gco2e", "g")
 
-    # 1.00k（視為 1.00kg）
-    if re.fullmatch(r"[-+]?\d*\.?\d+k", s):
+    if re.fullmatch(r"[-+]?\d*\.?\d+k", s):  # 1.00k -> 1.00kg
         return float(s[:-1])
 
     m = re.match(r"([-+]?\d*\.?\d+)(kg|g)?$", s)
@@ -85,10 +83,7 @@ def parse_cf_to_kg(value) -> float:
         return num / 1000.0 if unit == "g" else num
 
     m3 = re.search(r"([-+]?\d*\.?\d+)", s)
-    if m3:
-        return float(m3.group(1))
-
-    return float("nan")
+    return float(m3.group(1)) if m3 else float("nan")
 
 
 # =========================
@@ -112,8 +107,6 @@ def nominatim_search_nearby(query, lat, lng, radius_km=5, limit=60):
 
     lat_delta = radius_km / 111.0
     lng_delta = radius_km / (111.0 * max(0.1, math.cos(math.radians(lat))))
-
-    # viewbox: left,top,right,bottom（經度在前）
     viewbox = f"{lng-lng_delta},{lat+lat_delta},{lng+lng_delta},{lat-lat_delta}"
 
     params = {
@@ -122,19 +115,14 @@ def nominatim_search_nearby(query, lat, lng, radius_km=5, limit=60):
         "limit": str(limit),
         "addressdetails": 1,
         "viewbox": viewbox,
-        "bounded": 1,  # ✅ 強制只回傳 viewbox 範圍內
+        "bounded": 1,  # ✅ 只回傳 viewbox 內
     }
     headers = {
         "User-Agent": "carbon-footprint-edu-app/1.0",
         "Accept-Language": "zh-TW,zh,en",
     }
 
-    r = requests.get(
-        "https://nominatim.openstreetmap.org/search",
-        params=params,
-        headers=headers,
-        timeout=10,
-    )
+    r = requests.get("https://nominatim.openstreetmap.org/search", params=params, headers=headers, timeout=10)
     r.raise_for_status()
     data = r.json()
 
@@ -153,23 +141,18 @@ def nominatim_search_nearby(query, lat, lng, radius_km=5, limit=60):
 
 
 # =========================
-# 4) 讀取 Excel（不要求欄名固定：直接取前 4 欄）
+# 4) 讀取 Excel（直接取前 4 欄）
 # =========================
 @st.cache_data(show_spinner=False)
 def load_data_from_excel(file_bytes: bytes, filename: str) -> pd.DataFrame:
     df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
-
     if df.shape[1] < 4:
-        raise ValueError(
-            f"Excel 欄位太少（目前 {df.shape[1]} 欄）。至少需要 4 欄：編號、品名、碳足跡、宣告單位。"
-        )
+        raise ValueError("Excel 欄位太少：至少 4 欄（編號、品名、碳足跡、宣告單位）。")
 
     df = df.iloc[:, :4].copy()
     df.columns = ["code", "product_name", "product_carbon_footprint_data", "declared_unit"]
 
-    # ✅ code 統一成字串，且把 '1.0' 變成 '1'
     df["code"] = df["code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-
     df["product_name"] = df["product_name"].astype(str).str.strip()
     df["declared_unit"] = df["declared_unit"].astype(str).str.strip()
 
@@ -179,21 +162,15 @@ def load_data_from_excel(file_bytes: bytes, filename: str) -> pd.DataFrame:
 
 
 def read_excel_source() -> pd.DataFrame:
-    st.caption("📄 資料來源：優先讀取專案根目錄的 Excel；若讀不到可改用上傳。")
-
+    st.caption("📄 資料來源：優先讀取 repo 根目錄 Excel；若讀不到可改用上傳。")
     try:
         with open(EXCEL_PATH_DEFAULT, "rb") as f:
-            file_bytes = f.read()
-        return load_data_from_excel(file_bytes, EXCEL_PATH_DEFAULT)
+            return load_data_from_excel(f.read(), EXCEL_PATH_DEFAULT)
     except Exception:
-        pass
-
-    up = st.file_uploader("或改用上傳 Excel（.xlsx）", type=["xlsx"])
-    if up is None:
-        raise FileNotFoundError(
-            f"讀取失敗：請確認 {EXCEL_PATH_DEFAULT} 放在 repo 根目錄，或改用上傳。"
-        )
-    return load_data_from_excel(up.getvalue(), up.name)
+        up = st.file_uploader("或改用上傳 Excel（.xlsx）", type=["xlsx"])
+        if up is None:
+            raise FileNotFoundError(f"讀取失敗：請確認 {EXCEL_PATH_DEFAULT} 放在 repo 根目錄，或改用上傳。")
+        return load_data_from_excel(up.getvalue(), up.name)
 
 
 # =========================
@@ -220,32 +197,39 @@ def pick_one(df: pd.DataFrame, code_value: str) -> dict:
 
 
 # =========================
-# 6) Session 初始化（只 setdefault，不要覆寫 widget key）
+# 6) Session 初始化
 # =========================
 st.session_state.setdefault("page", "home")
 st.session_state.setdefault("visitor_id", "")
 
-st.session_state.setdefault("meal_items", None)      # DataFrame
-st.session_state.setdefault("cook_picks", {})        # {i: pick}
-st.session_state.setdefault("cook_method", {})       # {i: "水煮"/"煎炸"}
+st.session_state.setdefault("meal_items", None)
+st.session_state.setdefault("cook_picks", {})
+st.session_state.setdefault("cook_method", {})
 
-# 飲料
-st.session_state.setdefault("drink_mode_state", "隨機生成飲料")  # ✅ 用不同 key，避免跟 widget key 衝突
+st.session_state.setdefault("drink_mode_state", "隨機生成飲料")  # 不用 widget key
 st.session_state.setdefault("drink_pick", None)
 
-# 採買/交通
-st.session_state.setdefault("stores", [])            # 已確認加入的採買點（只保留 1 家）
-st.session_state.setdefault("search", [])            # 最近 5 家搜尋結果
+st.session_state.setdefault("stores", [])
+st.session_state.setdefault("search", [])
 st.session_state.setdefault("decision", 0)
 
-# 交通 widget key：transport_mode / ef_final / round_trip 讓 widget 自己管理
 st.session_state.setdefault("transport_mode", "汽車（汽油）")
 st.session_state.setdefault("ef_final", 1.15e-1)
 st.session_state.setdefault("round_trip", True)
 
+# ✅ 定位只抓一次，存在 geo（避免 DuplicateElementKey）
+st.session_state.setdefault("geo", None)
+
 
 # =========================
-# 7) 母頁
+# 7) 先抓定位（全 app 只呼叫一次）
+# =========================
+if st.session_state.geo is None:
+    st.session_state.geo = streamlit_geolocation()  # 只呼叫這一次！
+
+
+# =========================
+# 8) 母頁
 # =========================
 st.title(APP_TITLE)
 
@@ -279,7 +263,6 @@ if st.session_state.page == "home":
         if vid in VALID_IDS:
             name = VALID_IDS[vid]["name"]
             st.success(f"{name}您好，報到成功 ✅")
-
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.write(
                 f"""
@@ -288,9 +271,7 @@ if st.session_state.page == "home":
 - 抽 3 項食材（主餐）
 - 每道餐選擇水煮/煎炸（系統配對油或水）
 - 飲料可選（隨機或不喝）
-- 採買交通：以你的定位搜尋附近分店 → 顯示最近 5 家 → 做決策選 1 家 → 計入交通碳足跡
-
-準備好就按下「開始點餐」吧！
+- 採買交通：以你的定位搜尋附近分店 → 最近 5 家 → 選 1 家 → 確認後加入計算
 """
             )
             if st.button("🍴 開始點餐", use_container_width=True):
@@ -299,12 +280,11 @@ if st.session_state.page == "home":
             st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.warning("目前此預約號碼不在名單內（可按「直接開始（跳過）」當訪客進入）。")
-
     st.stop()
 
 
 # =========================
-# 8) 主頁：讀 Excel / 分類
+# 9) 主頁：讀 Excel / 分類
 # =========================
 try:
     df_all = read_excel_source()
@@ -319,12 +299,12 @@ df_water = df_all[df_all["code"] == "1-2"].copy()
 df_drink = df_all[df_all["code"] == "2"].copy()
 
 if len(df_food) == 0:
-    st.error("Excel 裡找不到 code=1 的食材。請確認你的『編號』欄有 1。")
+    st.error("Excel 裡找不到 code=1 的食材。請確認『編號』欄有 1。")
     st.stop()
 
 
 # =========================
-# 9) 抽食材 / 重置
+# 10) 抽食材 / 重置
 # =========================
 c1, c2 = st.columns([1, 1])
 with c1:
@@ -372,7 +352,7 @@ st.dataframe(
 
 
 # =========================
-# 10) 料理方式（每道餐）
+# 11) 料理方式（每道餐）
 # =========================
 st.subheader("🍳 選擇調理方式（每道餐各選一次）")
 
@@ -386,8 +366,8 @@ for i in range(len(meal_df)):
 
     pick = st.session_state.cook_picks[i]
 
-    oil_text = "（找不到油品資料 code=1-1）"
-    water_text = "（找不到水品資料 code=1-2）"
+    oil_text = "（找不到油品 code=1-1）"
+    water_text = "（找不到水品 code=1-2）"
     if len(df_oil) > 0:
         oil_text = f"（{pick['product_name']} / {pick['cf_kgco2e']:.3f}）" if pick["code"] == "1-1" else "（隨機油品）"
     if len(df_water) > 0:
@@ -418,7 +398,7 @@ for i in range(len(meal_df)):
 
 
 # =========================
-# 11) 飲料（隨機 or 不喝）——避免 key 衝突：radio 用 drink_mode_radio
+# 12) 飲料（隨機 or 不喝）
 # =========================
 st.subheader("🥤 飲料（可選）")
 
@@ -430,7 +410,6 @@ drink_mode = st.radio(
     key="drink_mode_radio",
 )
 
-# ✅ 不能寫 st.session_state["drink_mode_radio"]，但可以寫到 drink_mode_state（不同 key）
 if drink_mode != st.session_state.drink_mode_state:
     st.session_state.drink_mode_state = drink_mode
     if drink_mode == "我不喝飲料":
@@ -439,53 +418,42 @@ if drink_mode != st.session_state.drink_mode_state:
         st.session_state.drink_pick = pick_one(df_all, "2") if len(df_drink) > 0 else None
     st.rerun()
 
-colD1, colD2 = st.columns([1, 1])
-with colD1:
-    if st.session_state.drink_mode_state == "隨機生成飲料":
-        if st.button("🔄 換一杯飲料", use_container_width=True):
-            st.session_state.drink_pick = pick_one(df_all, "2") if len(df_drink) > 0 else None
-            st.rerun()
+if st.session_state.drink_mode_state == "隨機生成飲料":
+    if st.button("🔄 換一杯飲料", use_container_width=True):
+        st.session_state.drink_pick = pick_one(df_all, "2") if len(df_drink) > 0 else None
+        st.rerun()
 
 drink_cf = 0.0
 drink_name = "不喝飲料"
-if st.session_state.drink_mode_state == "隨機生成飲料":
-    if len(df_drink) == 0:
-        st.warning("找不到 code=2 的飲料資料，因此目前飲料固定為：不喝飲料。")
-        st.session_state.drink_pick = None
-    else:
-        if st.session_state.drink_pick is None:
-            st.session_state.drink_pick = pick_one(df_all, "2")
-        dp = st.session_state.drink_pick
-        drink_cf = float(dp["cf_kgco2e"])
-        drink_name = dp["product_name"]
-        st.info(f"本次飲料：**{drink_name}**（{drink_cf:.3f} kgCO₂e）")
+if st.session_state.drink_mode_state == "隨機生成飲料" and len(df_drink) > 0:
+    if st.session_state.drink_pick is None:
+        st.session_state.drink_pick = pick_one(df_all, "2")
+    dp = st.session_state.drink_pick
+    drink_cf = float(dp["cf_kgco2e"])
+    drink_name = dp["product_name"]
+    st.info(f"本次飲料：**{drink_name}**（{drink_cf:.3f} kgCO₂e）")
+elif st.session_state.drink_mode_state == "隨機生成飲料" and len(df_drink) == 0:
+    st.warning("找不到 code=2 的飲料資料，飲料目前固定為：不喝飲料。")
 
 
 # =========================
-# 12) 採買地點與交通碳足跡（定位附近最近 5 家）
+# 13) 採買地點與交通碳足跡（定位附近最近 5 家）
 # =========================
 st.subheader("🧭 採買地點與交通碳足跡（以你的定位為中心）")
 st.caption("搜尋後只顯示你附近的分店，依距離排序取最近 5 家；你必須做決策（選 1 家）再按確認才加入計算。")
 
-loc = streamlit_geolocation()
-user_lat = user_lng = None
-if not loc or not loc.get("latitude") or not loc.get("longitude"):
+geo = st.session_state.geo or {}
+user_lat = geo.get("latitude")
+user_lng = geo.get("longitude")
+user_lat = float(user_lat) if user_lat is not None else None
+user_lng = float(user_lng) if user_lng is not None else None
+
+if user_lat is None or user_lng is None:
     st.warning("請允許瀏覽器定位權限，才能搜尋你附近的分店與計算距離。")
 else:
-    user_lat = float(loc["latitude"])
-    user_lng = float(loc["longitude"])
     st.success(f"你的位置：{user_lat:.6f}, {user_lng:.6f}")
 
-transport_cf = 0.0
-transport_km = 0.0
-
-if user_lat is not None:
-    EF_MAP = {
-        "走路": 0.0,
-        "機車": 9.51e-2,
-        "汽車（汽油）": 1.15e-1,
-    }
-
+    EF_MAP = {"走路": 0.0, "機車": 9.51e-2, "汽車（汽油）": 1.15e-1}
     colA, colB, colC = st.columns([1.1, 1.2, 1.0])
 
     with colA:
@@ -493,7 +461,7 @@ if user_lat is not None:
             "交通方式",
             list(EF_MAP.keys()),
             index=list(EF_MAP.keys()).index(st.session_state.get("transport_mode", "汽車（汽油）")),
-            key="transport_mode",  # ✅ widget 自己寫 session_state
+            key="transport_mode",
         )
 
     with colB:
@@ -505,7 +473,7 @@ if user_lat is not None:
                 value=0.0,
                 step=0.01,
                 disabled=True,
-                key="ef_final",  # ✅ 走路固定 0
+                key="ef_final",
             )
         else:
             st.number_input(
@@ -513,15 +481,11 @@ if user_lat is not None:
                 min_value=0.0,
                 value=float(EF_MAP[mode]),
                 step=0.01,
-                key="ef_final",  # ✅ 其他可微調
+                key="ef_final",
             )
 
     with colC:
-        st.checkbox(
-            "算來回（去＋回）",
-            value=bool(st.session_state.get("round_trip", True)),
-            key="round_trip",  # ✅ widget 自己寫 session_state
-        )
+        st.checkbox("算來回（去＋回）", value=bool(st.session_state.get("round_trip", True)), key="round_trip")
 
     ef = float(st.session_state.get("ef_final", 0.0))
     round_trip = bool(st.session_state.get("round_trip", True))
@@ -577,6 +541,7 @@ if user_lat is not None:
     bounds = [[user_lat, user_lng]]
     for i, r in enumerate(st.session_state.search, start=1):
         bounds.append([r["lat"], r["lng"]])
+
         folium.Marker(
             [r["lat"], r["lng"]],
             tooltip=f"{i}. {r['name']}（{r['dist_km']:.2f} km）",
@@ -634,14 +599,14 @@ if user_lat is not None:
         )
 
         if st.button("✅ 確認此分店（加入採買點並納入計算）", use_container_width=True):
-            st.session_state.stores = [picked]  # 決策式：只保留 1 家
+            st.session_state.stores = [picked]
             st.rerun()
     else:
         st.warning("尚未搜尋到附近分店。請先按『搜尋附近分店（最近 5 家）』。")
 
 
 # =========================
-# 13) 組合表格 + 加總
+# 14) 組合表格 + 加總
 # =========================
 rows = []
 food_sum = 0.0
@@ -678,28 +643,29 @@ for i in range(len(meal_df)):
 
 combo_df = pd.DataFrame(rows)
 
-def style_combo(df):
+def style_combo(df_):
     food_cols = ["食材名稱", "食材碳足跡(kgCO₂e)", "宣告單位"]
     def row_style(_row):
-        return ["background-color: rgba(46, 204, 113, 0.18)" if c in food_cols else "" for c in df.columns]
-    return df.style.apply(row_style, axis=1)
+        return ["background-color: rgba(46, 204, 113, 0.18)" if c in food_cols else "" for c in df_.columns]
+    return df_.style.apply(row_style, axis=1)
 
 st.subheader("📋 本餐組合（表格即時更新）")
 st.dataframe(style_combo(combo_df), use_container_width=True, height=220)
 
-# 交通：以「已確認」的分店來算
+# 交通：以「已確認」的分店來算（用同一份 geo）
 transport_cf = 0.0
 transport_km = 0.0
-loc2 = streamlit_geolocation()
-if loc2 and loc2.get("latitude") and loc2.get("longitude") and st.session_state.stores:
-    u_lat = float(loc2["latitude"])
-    u_lng = float(loc2["longitude"])
-    picked = st.session_state.stores[0]
+geo = st.session_state.geo or {}
+u_lat = geo.get("latitude")
+u_lng = geo.get("longitude")
+u_lat = float(u_lat) if u_lat is not None else None
+u_lng = float(u_lng) if u_lng is not None else None
 
+if u_lat is not None and u_lng is not None and st.session_state.stores:
+    picked = st.session_state.stores[0]
     one_way = haversine_km(u_lat, u_lng, picked["lat"], picked["lng"])
     rt = bool(st.session_state.get("round_trip", True))
     ef = float(st.session_state.get("ef_final", 0.0))
-
     transport_km = one_way * (2 if rt else 1)
     transport_cf = transport_km * ef
 
@@ -717,7 +683,7 @@ st.markdown(
 )
 
 # =========================
-# 14) 圖表（長條圖 + 圓餅圖）
+# 15) 圖表（長條圖 + 圓餅圖）
 # =========================
 st.subheader("📊 圖表（選項一改就更新）")
 

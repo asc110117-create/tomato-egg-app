@@ -1,3 +1,62 @@
+import gspread
+from google.oauth2.service_account import Credentials
+import streamlit as st
+import pandas as pd
+
+def get_gspread_client():
+    sa_info = dict(st.secrets["gcp_service_account"])
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
+    return gspread.authorize(creds)
+
+def append_row_to_sheet(row_dict: dict):
+    gc = get_gspread_client()
+    sheet_name = st.secrets["google_sheet"]["spreadsheet_name"]
+    ws_name = st.secrets["google_sheet"]["worksheet_name"]
+
+    sh = gc.open(sheet_name)
+    ws = sh.worksheet(ws_name)
+
+    # 若第一列(表頭)是空的，就先寫入表頭
+    existing = ws.get_all_values()
+    if len(existing) == 0:
+        ws.append_row(list(row_dict.keys()))
+
+    ws.append_row(list(row_dict.values()))
+
+# ---- UI 測試 ----
+st.subheader("🧪 Google Sheet 寫入測試")
+
+if st.button("寫入一筆測試資料"):
+    test_row = {
+        "student_name": "測試同學",
+        "total_kgco2e": 1.234,
+        "food_kgco2e": 0.5,
+        "transport_kgco2e": 0.2,
+        "drink_kgco2e": 0.1,
+        "dessert": "A,B",
+        "packaging": "4-2,4-4",
+        "store": "全聯某分店",
+    }
+    append_row_to_sheet(test_row)
+    st.success("✅ 已寫入 Google Sheet（請回去刷新試算表看看）")
+
+
+
+
+
+
+
+
+
+
+
+###############################################################
+
+
 # app.py（完整：主餐+料理+飲料+採買交通(地圖選分店)+甜點(隨機5選2)+餐具包材(可複選)+圖表(圓餅含比例/長條)+CSV下載+可選Google Sheet記錄）
 #
 # 需要套件（requirements.txt 需要有）：
@@ -1108,3 +1167,4 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+

@@ -1,8 +1,8 @@
-# app.py（完整：食材 + 料理 + 飲料 + 採買交通 + 長條圖/圓餅圖）
-# ✅ 修正1：streamlit_geolocation() 只呼叫一次（避免 DuplicateElementKey）
-# ✅ 修正2：有 key 的 widget 不再手動寫回同 key 的 session_state（避免 StreamlitAPIException）
-# ✅ 交通方式：走路/機車/汽車（顯示來回）
-# ✅ 搜尋店名 → 只找定位附近 → 最近 5 家（1~5）→ 使用者做決策 → 確認才加入
+# app.py（完整：食材 + 料理 + 飲料 + 採買交通(可點地圖選分店) + 長條圖/圓餅圖）
+# ✅ 修正1：streamlit_geolocation() 只呼叫一次（避免 StreamlitDuplicateElementKey）
+# ✅ 修正2：有 key 的 widget 不手動寫回同 key 的 session_state（避免 StreamlitAPIException）
+# ✅ 搜尋「全聯」等關鍵字 → 顯示最近 5 家 → 地圖上「點橘色分店」即可選擇 → 按確認才加入計算
+# ✅ 交通方式：走路 / 機車 / 汽車（可算來回）
 # ✅ 圖表：長條圖 + 圓餅圖（Altair）
 
 import re
@@ -115,7 +115,7 @@ def nominatim_search_nearby(query, lat, lng, radius_km=5, limit=60):
         "limit": str(limit),
         "addressdetails": 1,
         "viewbox": viewbox,
-        "bounded": 1,  # ✅ 只回傳 viewbox 內
+        "bounded": 1,
     }
     headers = {
         "User-Agent": "carbon-footprint-edu-app/1.0",
@@ -206,30 +206,25 @@ st.session_state.setdefault("meal_items", None)
 st.session_state.setdefault("cook_picks", {})
 st.session_state.setdefault("cook_method", {})
 
-st.session_state.setdefault("drink_mode_state", "隨機生成飲料")  # 不用 widget key
+st.session_state.setdefault("drink_mode_state", "隨機生成飲料")
 st.session_state.setdefault("drink_pick", None)
 
-st.session_state.setdefault("stores", [])
-st.session_state.setdefault("search", [])
+st.session_state.setdefault("stores", [])   # 已確認
+st.session_state.setdefault("search", [])   # 最近 5 家
 st.session_state.setdefault("decision", 0)
 
 st.session_state.setdefault("transport_mode", "汽車（汽油）")
 st.session_state.setdefault("ef_final", 1.15e-1)
 st.session_state.setdefault("round_trip", True)
 
-# ✅ 定位只抓一次，存在 geo（避免 DuplicateElementKey）
+# ✅ 定位只抓一次
 st.session_state.setdefault("geo", None)
-
-
-# =========================
-# 7) 先抓定位（全 app 只呼叫一次）
-# =========================
 if st.session_state.geo is None:
-    st.session_state.geo = streamlit_geolocation()  # 只呼叫這一次！
+    st.session_state.geo = streamlit_geolocation()
 
 
 # =========================
-# 8) 母頁
+# 7) 母頁
 # =========================
 st.title(APP_TITLE)
 
@@ -271,7 +266,7 @@ if st.session_state.page == "home":
 - 抽 3 項食材（主餐）
 - 每道餐選擇水煮/煎炸（系統配對油或水）
 - 飲料可選（隨機或不喝）
-- 採買交通：以你的定位搜尋附近分店 → 最近 5 家 → 選 1 家 → 確認後加入計算
+- 採買交通：搜尋附近分店 → 地圖點選一間 → 確認後納入計算
 """
             )
             if st.button("🍴 開始點餐", use_container_width=True):
@@ -284,7 +279,7 @@ if st.session_state.page == "home":
 
 
 # =========================
-# 9) 主頁：讀 Excel / 分類
+# 8) 主頁：讀 Excel / 分類
 # =========================
 try:
     df_all = read_excel_source()
@@ -304,7 +299,7 @@ if len(df_food) == 0:
 
 
 # =========================
-# 10) 抽食材 / 重置
+# 9) 抽食材 / 重置
 # =========================
 c1, c2 = st.columns([1, 1])
 with c1:
@@ -352,7 +347,7 @@ st.dataframe(
 
 
 # =========================
-# 11) 料理方式（每道餐）
+# 10) 料理方式（每道餐）
 # =========================
 st.subheader("🍳 選擇調理方式（每道餐各選一次）")
 
@@ -398,7 +393,7 @@ for i in range(len(meal_df)):
 
 
 # =========================
-# 12) 飲料（隨機 or 不喝）
+# 11) 飲料（隨機 or 不喝）
 # =========================
 st.subheader("🥤 飲料（可選）")
 
@@ -437,16 +432,19 @@ elif st.session_state.drink_mode_state == "隨機生成飲料" and len(df_drink)
 
 
 # =========================
-# 13) 採買地點與交通碳足跡（定位附近最近 5 家）
+# 12) 採買地點與交通碳足跡（可點地圖選分店）
 # =========================
 st.subheader("🧭 採買地點與交通碳足跡（以你的定位為中心）")
-st.caption("搜尋後只顯示你附近的分店，依距離排序取最近 5 家；你必須做決策（選 1 家）再按確認才加入計算。")
+st.caption("搜尋後顯示最近 5 家分店。請直接『點地圖橘色分店點』來選擇，再按確認加入計算。")
 
 geo = st.session_state.geo or {}
 user_lat = geo.get("latitude")
 user_lng = geo.get("longitude")
 user_lat = float(user_lat) if user_lat is not None else None
 user_lng = float(user_lng) if user_lng is not None else None
+
+transport_cf = 0.0
+transport_km = 0.0
 
 if user_lat is None or user_lng is None:
     st.warning("請允許瀏覽器定位權限，才能搜尋你附近的分店與計算距離。")
@@ -467,22 +465,9 @@ else:
     with colB:
         mode = st.session_state["transport_mode"]
         if EF_MAP[mode] == 0.0:
-            st.number_input(
-                "排放係數（kgCO₂e/km）",
-                min_value=0.0,
-                value=0.0,
-                step=0.01,
-                disabled=True,
-                key="ef_final",
-            )
+            st.number_input("排放係數（kgCO₂e/km）", min_value=0.0, value=0.0, step=0.01, disabled=True, key="ef_final")
         else:
-            st.number_input(
-                "排放係數（kgCO₂e/km，可微調）",
-                min_value=0.0,
-                value=float(EF_MAP[mode]),
-                step=0.01,
-                key="ef_final",
-            )
+            st.number_input("排放係數（kgCO₂e/km，可微調）", min_value=0.0, value=float(EF_MAP[mode]), step=0.01, key="ef_final")
 
     with colC:
         st.checkbox("算來回（去＋回）", value=bool(st.session_state.get("round_trip", True)), key="round_trip")
@@ -525,15 +510,16 @@ else:
             st.session_state.decision = 0
             st.rerun()
 
-    # 地圖
-    st.markdown("### 🗺️ 地圖（最近 5 家分店：1～5）")
+    # --- 地圖（可點選） ---
+    st.markdown("### 🗺️ 地圖（點橘色分店點即可選）")
+
     m = folium.Map(location=[user_lat, user_lng], zoom_start=14)
     folium.Marker([user_lat, user_lng], tooltip="你的位置", icon=folium.Icon(color="blue", icon="user")).add_to(m)
 
     for p in st.session_state.stores:
         folium.Marker(
             [p["lat"], p["lng"]],
-            tooltip=f"已選：{p['name']}",
+            tooltip=f"已確認：{p['name']}",
             popup=p.get("display_name", p["name"]),
             icon=folium.Icon(color="green", icon="shopping-cart"),
         ).add_to(m)
@@ -570,28 +556,37 @@ else:
     if len(bounds) >= 2:
         m.fit_bounds(bounds)
 
-    st_folium(m, height=420, use_container_width=True)
+    map_state = st_folium(m, height=420, use_container_width=True)
 
-    # 決策區
-    st.markdown("### 🧠 做決策：你要去哪一家？（選 1 家再確認）")
-    if st.session_state.search:
-        options = [f"{i}. {r['name']}（約 {r['dist_km']:.2f} km）" for i, r in enumerate(st.session_state.search, start=1)]
-        chosen = st.radio(
-            "請選擇一個你『實際會去』的分店",
-            options,
-            index=int(st.session_state.decision),
-            key="decision_radio",
-        )
+    # --- 點擊選分店 ---
+    def nearest_store_index(clicked_lat, clicked_lng, stores):
+        best_i = None
+        best_d = 10**9
+        for i, s in enumerate(stores):
+            d = haversine_km(clicked_lat, clicked_lng, s["lat"], s["lng"])
+            if d < best_d:
+                best_d = d
+                best_i = i
+        return best_i, best_d
 
-        idx = int(chosen.split(".")[0]) - 1
-        st.session_state.decision = idx
-        picked = st.session_state.search[idx]
+    st.markdown("### 🧠 做決策：點地圖選 1 家 → 再按確認加入計算")
 
+    if not st.session_state.search:
+        st.warning("尚未搜尋到附近分店。請先按『搜尋附近分店（最近 5 家）』。")
+    else:
+        clicked = map_state.get("last_object_clicked")  # {"lat":..,"lng":..} 或 None
+        if clicked:
+            ci, cd = nearest_store_index(clicked["lat"], clicked["lng"], st.session_state.search)
+            # 閾值：點到很靠近 marker 才算選中（避免點空白）
+            if ci is not None and cd <= 0.25:
+                st.session_state.decision = ci
+
+        picked = st.session_state.search[int(st.session_state.decision)]
         trip_km_preview = picked["dist_km"] * (2 if round_trip else 1)
         transport_cf_preview = trip_km_preview * ef
 
         st.info(
-            f"你目前選擇：**{picked['name']}**\n\n"
+            f"目前選擇：**{picked['name']}**\n\n"
             f"- 單程距離：約 **{picked['dist_km']:.2f} km**\n"
             f"- 里程（{'來回' if round_trip else '單程'}）：約 **{trip_km_preview:.2f} km**\n"
             f"- 交通方式：**{st.session_state['transport_mode']}**\n"
@@ -600,13 +595,14 @@ else:
 
         if st.button("✅ 確認此分店（加入採買點並納入計算）", use_container_width=True):
             st.session_state.stores = [picked]
+            st.success("已確認分店，已納入交通碳足跡計算。")
             st.rerun()
-    else:
-        st.warning("尚未搜尋到附近分店。請先按『搜尋附近分店（最近 5 家）』。")
+
+        st.caption("提示：請點橘色分店標記附近；若點空白處不會改變選擇。")
 
 
 # =========================
-# 14) 組合表格 + 加總
+# 13) 組合表格 + 加總
 # =========================
 rows = []
 food_sum = 0.0
@@ -652,7 +648,7 @@ def style_combo(df_):
 st.subheader("📋 本餐組合（表格即時更新）")
 st.dataframe(style_combo(combo_df), use_container_width=True, height=220)
 
-# 交通：以「已確認」的分店來算（用同一份 geo）
+# 交通：以「已確認」的分店來算
 transport_cf = 0.0
 transport_km = 0.0
 geo = st.session_state.geo or {}
@@ -683,7 +679,7 @@ st.markdown(
 )
 
 # =========================
-# 15) 圖表（長條圖 + 圓餅圖）
+# 14) 圖表（長條圖 + 圓餅圖）
 # =========================
 st.subheader("📊 圖表（選項一改就更新）")
 

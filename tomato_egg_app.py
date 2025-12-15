@@ -266,36 +266,28 @@ def sheets_available() -> bool:
     except Exception:
         return False
 
-
 def append_result_to_google_sheet(row: dict):
     import gspread
     from google.oauth2.service_account import Credentials
+    import streamlit as st
 
-    creds_dict = dict(st.secrets["gcp_service_account"])
-
-    # ✅ 只要 spreadsheets scope 就夠（不需要 Drive scope）
+    sa_info = dict(st.secrets["gcp_service_account"])
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
     gc = gspread.authorize(creds)
 
     sheet_id = st.secrets["google_sheet"]["spreadsheet_id"]
     ws_name = st.secrets["google_sheet"]["worksheet_name"]
 
-    sh = gc.open_by_key(sheet_id)
+    sh = gc.open_by_key(sheet_id)         # ✅ 關鍵：不走 Drive
+    ws = sh.worksheet(ws_name)
 
-    try:
-        ws = sh.worksheet(ws_name)
-    except Exception:
-        ws = sh.add_worksheet(title=ws_name, rows=2000, cols=50)
-
-    header = ws.row_values(1)
-    if not header:
+    existing = ws.get_all_values()
+    if len(existing) == 0:
         ws.append_row(list(row.keys()))
+    ws.append_row(list(row.values()))
 
-    # 以 header 欄位順序寫入（避免欄位對不齊）
-    header = ws.row_values(1)
-    values = [row.get(k, "") for k in header]
-    ws.append_row(values)
+
 
 
 # =========================
@@ -662,4 +654,5 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+
 

@@ -1,7 +1,7 @@
 streamlit
 pandas
 openpyxl
-matplotlib
-streamlit-folium
+altair
 folium
+streamlit-folium
 streamlit-geolocation

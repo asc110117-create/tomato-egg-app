@@ -2,6 +2,7 @@ streamlit
 pandas
 openpyxl
 altair
+requests
 folium
 streamlit-folium
 streamlit-geolocation

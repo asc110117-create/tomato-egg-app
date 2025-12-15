@@ -1,111 +1,201 @@
 
-
 # tomato_egg_app.py
-import streamlit as st
-import pandas as pd
 import math
+import re
 from datetime import datetime
-import gspread
-from google.oauth2.service_account import Credentials
+from io import BytesIO
 
-st.set_page_config(page_title="一餐的碳足跡大冒險", layout="centered")
+import pandas as pd
+import streamlit as st
+import altair as alt
+
+# =========================
+# Basic page config
+# =========================
+st.set_page_config(page_title="一餐的碳足跡大冒險", page_icon="🍽️", layout="centered")
 st.title("🍽️ 一餐的碳足跡大冒險")
 
-def load_excel():
-    df = pd.read_excel("產品碳足跡3.xlsx")
+# =========================
+# Utilities
+# =========================
+def parse_cf_to_g(val):
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val) * 1000 if float(val) <= 50 else float(val)
+    s = str(val).lower().replace(" ", "")
+    s = s.replace("kgco2e", "kg").replace("gco2e", "g")
+    m = re.search(r"([0-9.]+)(kg|g)?", s)
+    if not m:
+        return 0.0
+    num = float(m.group(1))
+    unit = m.group(2)
+    if unit == "kg":
+        return num * 1000
+    if unit == "g":
+        return num
+    return num * 1000 if num <= 50 else num
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
+    return 2 * R * math.asin(math.sqrt(a))
+
+# =========================
+# Load Excel safely
+# =========================
+@st.cache_data
+def load_excel(file):
+    df = pd.read_excel(file)
     df = df.iloc[:, :4]
-    df.columns = ["group","name","cf","unit"]
-    df["cf"] = df["cf"].astype(float)
+    df.columns = ["group", "name", "cf_raw", "unit"]
+    df["cf_g"] = df["cf_raw"].apply(parse_cf_to_g)
+    df["cf_kg"] = df["cf_g"] / 1000
+    df["group"] = df["group"].astype(str)
     return df
 
-def sheet_client():
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=["https://www.googleapis.com/auth/spreadsheets"]
-    )
-    gc = gspread.authorize(creds)
-    sh = gc.open_by_key(st.secrets["google_sheet"]["spreadsheet_id"])
-    return sh.worksheet(st.secrets["google_sheet"]["worksheet_name"])
+try:
+    with open("產品碳足跡3.xlsx", "rb") as f:
+        df = load_excel(f)
+except Exception:
+    up = st.file_uploader("請上傳碳足跡 Excel", type=["xlsx"])
+    if up is None:
+        st.stop()
+    df = load_excel(up)
 
-def get_round(student):
-    ws = sheet_client()
-    rows = ws.get_all_values()
-    if len(rows) <= 1:
-        return 1
-    df = pd.DataFrame(rows[1:], columns=rows[0])
-    return df[df["student_name"] == student].shape[0] + 1
-
-df = load_excel()
-
-food_df = df[df.group == "1"]
-oil_df = df[df.group == "1-1"]
-water_df = df[df.group == "1-2"]
-drink_df = df[df.group == "2"]
-dessert_df = df[df.group == "3"]
-
+# =========================
+# Student + round
+# =========================
 student = st.text_input("請輸入你的名字")
 if not student:
     st.stop()
 
-round_no = get_round(student)
-st.info(f"這是你第 {round_no} 次測試")
+round_no = st.session_state.get("round_no", 1)
+st.session_state["round_no"] = round_no
+st.info(f"📘 這是你第 {round_no} 次測試")
 
-st.header("🍛 主食（3 道）")
-meal = food_df.sample(3).reset_index(drop=True)
+# =========================
+# Main food (group 1)
+# =========================
+food_df = df[df["group"] == "1"]
+if food_df.empty:
+    st.error("❌ Excel 中找不到 group=1 的主食")
+    st.stop()
 
-food_total = meal.cf.sum()
-cook_total = 0
+meal = food_df.sample(min(3, len(food_df)), random_state=round_no).reset_index(drop=True)
+st.subheader("🍛 主食（3 道）")
+st.dataframe(meal[["name", "cf_kg", "unit"]])
 
-for i, r in meal.iterrows():
-    st.subheader(r["name"])
-    method = st.radio("料理方式", ["水煮","油炸"], key=f"cook_{i}")
+food_cf = meal["cf_kg"].sum()
+
+# =========================
+# Cooking method (1-1 oil / 1-2 water)
+# =========================
+st.subheader("🍳 料理方式")
+cook_cf = 0.0
+for i, row in meal.iterrows():
+    method = st.radio(
+        f"{row['name']}",
+        ["水煮", "油炸"],
+        key=f"cook_{i}",
+        horizontal=True,
+    )
     if method == "水煮":
-        pick = water_df.sample(1).iloc[0]
+        pick = df[df["group"] == "1-2"].sample(1).iloc[0]
     else:
-        pick = oil_df.sample(1).iloc[0]
-    cook_total += pick.cf
-    st.caption(f"{pick.name}：{pick.cf} kgCO₂e / {pick.unit}")
+        pick = df[df["group"] == "1-1"].sample(1).iloc[0]
+    cook_cf += pick["cf_kg"]
+    st.caption(f"{method}：{pick['name']}（{pick['cf_kg']:.3f} kgCO₂e）")
 
-st.header("🥤 飲料")
-drink_options = ["不喝"] + [f"{r.name} ({r.cf} kgCO₂e/{r.unit})" for _, r in drink_df.iterrows()]
-drink_choice = st.selectbox("選擇飲料", drink_options)
-drink_cf = 0 if drink_choice == "不喝" else drink_df.iloc[drink_options.index(drink_choice)-1].cf
+# =========================
+# Drink (group 2)
+# =========================
+st.subheader("🥤 飲料")
+drink_opts = ["不喝"] + [
+    f"{r['name']}（{r['cf_kg']:.3f} kgCO₂e / {r['unit']}）"
+    for _, r in df[df["group"] == "2"].iterrows()
+]
+drink_choice = st.selectbox("選擇飲料", drink_opts)
+drink_cf = 0.0
+if drink_choice != "不喝":
+    idx = drink_opts.index(drink_choice) - 1
+    drink_cf = df[df["group"] == "2"].iloc[idx]["cf_kg"]
 
-st.header("🍰 甜點")
-dessert_options = [f"{r.name} ({r.cf} kgCO₂e/{r.unit})" for _, r in dessert_df.iterrows()]
-dessert_choice = st.selectbox("選擇甜點", dessert_options)
-dessert_cf = dessert_df.iloc[dessert_options.index(dessert_choice)].cf
+# =========================
+# Dessert (group 3)
+# =========================
+st.subheader("🍰 甜點")
+dessert_df = df[df["group"] == "3"]
+dessert_opts = [
+    f"{r['name']}（{r['cf_kg']:.3f} kgCO₂e / {r['unit']}）"
+    for _, r in dessert_df.iterrows()
+]
+dessert_choice = st.selectbox("選擇甜點", ["不吃"] + dessert_opts)
+dessert_cf = 0.0
+if dessert_choice != "不吃":
+    idx = dessert_opts.index(dessert_choice)
+    dessert_cf = dessert_df.iloc[idx]["cf_kg"]
 
-st.header("🛵 交通")
-transport = st.selectbox("交通方式", ["走路","機車","汽車"])
-distance = st.number_input("距離(km)", 0.0)
-weight = st.number_input("食材重量(kg)", 0.0)
+# =========================
+# Transport (distance-based)
+# =========================
+st.subheader("🚚 交通")
+mode = st.selectbox(
+    "交通方式",
+    [
+        "走路（0 kgCO₂e）",
+        "汽車（2.71 kgCO₂e / 噸公里）",
+    ],
+)
+transport_cf = 0.0
+if "汽車" in mode:
+    km = st.number_input("距離（km）", 0.0, 100.0, 12.0)
+    weight_kg = st.number_input("食材總重量（kg）", 0.1, 50.0, 0.8)
+    transport_cf = km * (weight_kg / 1000) * 2.71
+    st.caption(f"公式：{km} × {weight_kg/1000:.4f} × 2.71 = {transport_cf:.3f} kgCO₂e")
 
-transport_cf = 0
-if transport != "走路":
-    factor = 2.71 if transport == "機車" else 0.25
-    transport_cf = distance * (weight/1000) * factor
-    st.caption(f"公式：{distance} × {weight/1000:.4f} × {factor}")
+# =========================
+# Total + charts
+# =========================
+total = food_cf + cook_cf + drink_cf + dessert_cf + transport_cf
+st.success(f"🌍 本餐碳足跡：{total:.3f} kgCO₂e")
 
-total = food_total + cook_total + drink_cf + dessert_cf + transport_cf
-st.metric("總碳足跡", f"{total:.3f} kgCO₂e")
-
-row = {
-    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    "student_name": student,
-    "round": round_no,
-    "total_kgco2e": total
-}
-
-st.download_button(
-    "⬇️ 下載 CSV",
-    pd.DataFrame([row]).to_csv(index=False).encode("utf-8-sig"),
-    file_name=f"{student}_round{round_no}.csv"
+chart_df = pd.DataFrame(
+    {
+        "項目": ["主食", "料理", "飲料", "甜點", "交通"],
+        "kgCO2e": [food_cf, cook_cf, drink_cf, dessert_cf, transport_cf],
+    }
 )
 
-if st.button("📤 寫入 Google Sheet"):
-    ws = sheet_client()
-    if len(ws.get_all_values()) == 0:
-        ws.append_row(list(row.keys()))
-    ws.append_row(list(row.values()))
-    st.success("已寫入 Google Sheet")
+bar = (
+    alt.Chart(chart_df)
+    .mark_bar()
+    .encode(x="項目", y="kgCO2e")
+)
+pie = (
+    alt.Chart(chart_df)
+    .mark_arc()
+    .encode(theta="kgCO2e", color="項目")
+)
+
+st.altair_chart(bar, use_container_width=True)
+st.altair_chart(pie, use_container_width=True)
+
+# =========================
+# CSV download
+# =========================
+out = {
+    "timestamp": datetime.now().isoformat(),
+    "student": student,
+    "round": round_no,
+    "total_kgco2e": total,
+}
+csv = pd.DataFrame([out]).to_csv(index=False).encode("utf-8-sig")
+st.download_button("⬇️ 下載 CSV", csv, "carbon_meal.csv", "text/csv")

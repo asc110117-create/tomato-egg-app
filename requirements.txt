@@ -2,3 +2,6 @@ streamlit
 pandas
 openpyxl
 matplotlib
+streamlit-folium
+folium
+streamlit-geolocation

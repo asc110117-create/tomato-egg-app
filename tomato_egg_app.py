@@ -1,8 +1,9 @@
 # app.py（完整：食材 + 料理 + 飲料 + 採買交通 + 長條圖/圓餅圖）
-# ✅ 不含除錯 Excel 區塊
+# ✅ 修正 StreamlitAPIException：有 key 的 widget 不再手動寫回同 key 的 session_state
 # ✅ 交通方式：走路/機車/汽車（顯示來回）
 # ✅ 搜尋店名（例如全聯）→ 只找定位附近 → 最近 5 家（1~5）→ 使用者做決策 → 確認才加入
 # ✅ 圖表：長條圖 + 圓餅圖（Altair）
+# ✅ Excel：取前 4 欄（編號/品名/碳足跡/宣告單位），code 強制字串化避免 sample 篩不到
 
 import re
 import random
@@ -167,9 +168,8 @@ def load_data_from_excel(file_bytes: bytes, filename: str) -> pd.DataFrame:
     df.columns = ["code", "product_name", "product_carbon_footprint_data", "declared_unit"]
 
     # ✅ code 統一成字串，且把 '1.0' 變成 '1'
-    df["code"] = (
-        df["code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    )
+    df["code"] = df["code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+
     df["product_name"] = df["product_name"].astype(str).str.strip()
     df["declared_unit"] = df["declared_unit"].astype(str).str.strip()
 
@@ -220,7 +220,7 @@ def pick_one(df: pd.DataFrame, code_value: str) -> dict:
 
 
 # =========================
-# 6) Session 初始化
+# 6) Session 初始化（只 setdefault，不要覆寫 widget key）
 # =========================
 st.session_state.setdefault("page", "home")
 st.session_state.setdefault("visitor_id", "")
@@ -229,7 +229,8 @@ st.session_state.setdefault("meal_items", None)      # DataFrame
 st.session_state.setdefault("cook_picks", {})        # {i: pick}
 st.session_state.setdefault("cook_method", {})       # {i: "水煮"/"煎炸"}
 
-st.session_state.setdefault("drink_mode", "隨機生成飲料")
+# 飲料
+st.session_state.setdefault("drink_mode_state", "隨機生成飲料")  # ✅ 用不同 key，避免跟 widget key 衝突
 st.session_state.setdefault("drink_pick", None)
 
 # 採買/交通
@@ -237,9 +238,10 @@ st.session_state.setdefault("stores", [])            # 已確認加入的採買�
 st.session_state.setdefault("search", [])            # 最近 5 家搜尋結果
 st.session_state.setdefault("decision", 0)
 
+# 交通 widget key：transport_mode / ef_final / round_trip 讓 widget 自己管理
 st.session_state.setdefault("transport_mode", "汽車（汽油）")
+st.session_state.setdefault("ef_final", 1.15e-1)
 st.session_state.setdefault("round_trip", True)
-st.session_state.setdefault("ef_final", 1.15e-1)     # default 汽車 0.115
 
 
 # =========================
@@ -331,6 +333,7 @@ with c1:
         st.session_state.cook_method = {i: "水煮" for i in range(len(st.session_state.meal_items))}
         st.session_state.cook_picks = {}
         st.session_state.drink_pick = None
+        st.session_state.drink_mode_state = "隨機生成飲料"
         st.rerun()
 
 with c2:
@@ -338,7 +341,7 @@ with c2:
         st.session_state.meal_items = None
         st.session_state.cook_method = {}
         st.session_state.cook_picks = {}
-        st.session_state.drink_mode = "隨機生成飲料"
+        st.session_state.drink_mode_state = "隨機生成飲料"
         st.session_state.drink_pick = None
         st.session_state.search = []
         st.session_state.stores = []
@@ -415,20 +418,21 @@ for i in range(len(meal_df)):
 
 
 # =========================
-# 11) 飲料（隨機 or 不喝）
+# 11) 飲料（隨機 or 不喝）——避免 key 衝突：radio 用 drink_mode_radio
 # =========================
 st.subheader("🥤 飲料（可選）")
 
 drink_mode = st.radio(
     "飲料選項",
     ["隨機生成飲料", "我不喝飲料"],
-    index=0 if st.session_state.drink_mode == "隨機生成飲料" else 1,
+    index=0 if st.session_state.drink_mode_state == "隨機生成飲料" else 1,
     horizontal=True,
     key="drink_mode_radio",
 )
 
-if drink_mode != st.session_state.drink_mode:
-    st.session_state.drink_mode = drink_mode
+# ✅ 不能寫 st.session_state["drink_mode_radio"]，但可以寫到 drink_mode_state（不同 key）
+if drink_mode != st.session_state.drink_mode_state:
+    st.session_state.drink_mode_state = drink_mode
     if drink_mode == "我不喝飲料":
         st.session_state.drink_pick = None
     else:
@@ -437,14 +441,14 @@ if drink_mode != st.session_state.drink_mode:
 
 colD1, colD2 = st.columns([1, 1])
 with colD1:
-    if st.session_state.drink_mode == "隨機生成飲料":
+    if st.session_state.drink_mode_state == "隨機生成飲料":
         if st.button("🔄 換一杯飲料", use_container_width=True):
             st.session_state.drink_pick = pick_one(df_all, "2") if len(df_drink) > 0 else None
             st.rerun()
 
 drink_cf = 0.0
 drink_name = "不喝飲料"
-if st.session_state.drink_mode == "隨機生成飲料":
+if st.session_state.drink_mode_state == "隨機生成飲料":
     if len(df_drink) == 0:
         st.warning("找不到 code=2 的飲料資料，因此目前飲料固定為：不喝飲料。")
         st.session_state.drink_pick = None
@@ -472,49 +476,55 @@ else:
     user_lng = float(loc["longitude"])
     st.success(f"你的位置：{user_lat:.6f}, {user_lng:.6f}")
 
-EF_MAP = {
-    "走路": 0.0,
-    "機車": 9.51e-2,
-    "汽車（汽油）": 1.15e-1,
-}
-
-transport_cf = 0.0  # default
+transport_cf = 0.0
+transport_km = 0.0
 
 if user_lat is not None:
+    EF_MAP = {
+        "走路": 0.0,
+        "機車": 9.51e-2,
+        "汽車（汽油）": 1.15e-1,
+    }
+
     colA, colB, colC = st.columns([1.1, 1.2, 1.0])
 
     with colA:
-        transport_mode = st.selectbox(
+        st.selectbox(
             "交通方式",
             list(EF_MAP.keys()),
             index=list(EF_MAP.keys()).index(st.session_state.get("transport_mode", "汽車（汽油）")),
-            key="transport_mode",
+            key="transport_mode",  # ✅ widget 自己寫 session_state
         )
 
     with colB:
-        if EF_MAP[transport_mode] == 0.0:
-            ef = st.number_input(
+        mode = st.session_state["transport_mode"]
+        if EF_MAP[mode] == 0.0:
+            st.number_input(
                 "排放係數（kgCO₂e/km）",
                 min_value=0.0,
                 value=0.0,
                 step=0.01,
                 disabled=True,
-                key="ef_locked_walk",
+                key="ef_final",  # ✅ 走路固定 0
             )
         else:
-            ef = st.number_input(
+            st.number_input(
                 "排放係數（kgCO₂e/km，可微調）",
                 min_value=0.0,
-                value=float(EF_MAP[transport_mode]),
+                value=float(EF_MAP[mode]),
                 step=0.01,
-                key="ef_by_mode",
+                key="ef_final",  # ✅ 其他可微調
             )
 
     with colC:
-        round_trip = st.checkbox("算來回（去＋回）", value=bool(st.session_state.get("round_trip", True)), key="round_trip")
+        st.checkbox(
+            "算來回（去＋回）",
+            value=bool(st.session_state.get("round_trip", True)),
+            key="round_trip",  # ✅ widget 自己寫 session_state
+        )
 
-    st.session_state["ef_final"] = float(ef)
-    st.session_state["round_trip"] = bool(round_trip)
+    ef = float(st.session_state.get("ef_final", 0.0))
+    round_trip = bool(st.session_state.get("round_trip", True))
 
     st.markdown("### 🔎 搜尋附近分店（例如：全聯）")
     q = st.text_input("搜尋關鍵字", value="全聯", key="place_query")
@@ -612,13 +622,13 @@ if user_lat is not None:
         st.session_state.decision = idx
         picked = st.session_state.search[idx]
 
-        trip_km = picked["dist_km"] * (2 if st.session_state["round_trip"] else 1)
-        transport_cf_preview = trip_km * float(st.session_state["ef_final"])
+        trip_km_preview = picked["dist_km"] * (2 if round_trip else 1)
+        transport_cf_preview = trip_km_preview * ef
 
         st.info(
             f"你目前選擇：**{picked['name']}**\n\n"
             f"- 單程距離：約 **{picked['dist_km']:.2f} km**\n"
-            f"- 里程（{'來回' if st.session_state['round_trip'] else '單程'}）：約 **{trip_km:.2f} km**\n"
+            f"- 里程（{'來回' if round_trip else '單程'}）：約 **{trip_km_preview:.2f} km**\n"
             f"- 交通方式：**{st.session_state['transport_mode']}**\n"
             f"- 交通碳足跡（預估）：**{transport_cf_preview:.3f} kgCO₂e**"
         )
@@ -680,11 +690,18 @@ st.dataframe(style_combo(combo_df), use_container_width=True, height=220)
 # 交通：以「已確認」的分店來算
 transport_cf = 0.0
 transport_km = 0.0
-if user_lat is not None and st.session_state.stores:
+loc2 = streamlit_geolocation()
+if loc2 and loc2.get("latitude") and loc2.get("longitude") and st.session_state.stores:
+    u_lat = float(loc2["latitude"])
+    u_lng = float(loc2["longitude"])
     picked = st.session_state.stores[0]
-    one_way = haversine_km(user_lat, user_lng, picked["lat"], picked["lng"])
-    transport_km = one_way * (2 if st.session_state.get("round_trip", True) else 1)
-    transport_cf = transport_km * float(st.session_state.get("ef_final", 0.0))
+
+    one_way = haversine_km(u_lat, u_lng, picked["lat"], picked["lng"])
+    rt = bool(st.session_state.get("round_trip", True))
+    ef = float(st.session_state.get("ef_final", 0.0))
+
+    transport_km = one_way * (2 if rt else 1)
+    transport_cf = transport_km * ef
 
 total = food_sum + cook_sum + drink_cf + transport_cf
 

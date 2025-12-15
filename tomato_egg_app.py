@@ -1,236 +1,129 @@
 
-# =============================================================
-# 🍅🍳 一餐的碳足跡計算（教學完整版）
-# - 主餐（抽 3 樣食材）
-# - 飲料（可選）
-# - 甜點（5 選 2）
-# - 餐具 / 包材（可複選）
-# - 圖表（長條圖 + 圓餅圖）
-# - 自動判斷第幾次測試（同一學生）
-# - CSV 下載
-# - （可選）寫入 Google Sheet
-# =============================================================
+# tomato_egg_app_TRANSPORT_PKM_TKM_FULL.py
+# -------------------------------------------------
+# 教學重點版本（給老師用）
+# ✔ 主食 → 水煮/煎炸 → 飲料 → 甜點 → 運輸
+# ✔ 運輸可選：走路 / pkm / tkm
+# ✔ tkm 會自動加總食材重量，並顯示計算公式
+# ✔ 地圖只負責「算距離」
+# -------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import random
-import re
+import math
 from io import BytesIO
-from datetime import datetime
 
-import altair as alt
+# ========== 基本設定 ==========
+st.set_page_config(page_title="一餐的碳足跡大冒險", layout="centered")
+st.title("🍽️ 一餐的碳足跡大冒險")
 
-# =============================================================
-# 基本設定
-# =============================================================
-st.set_page_config(
-    page_title="一餐的碳足跡計算（教學版）",
-    page_icon="🍅",
-    layout="centered"
-)
+# ========== 範例資料（你之後可換成 Excel 讀取） ==========
+food_data = pd.DataFrame([
+    {"name": "白飯", "cf": 0.20, "weight": 0.25},
+    {"name": "雞肉", "cf": 0.45, "weight": 0.30},
+    {"name": "青菜", "cf": 0.10, "weight": 0.15},
+])
 
-st.title("🍅🍳 一餐的碳足跡計算（教學版）")
+oil = {"name": "食用油", "cf": 0.12}
+water = {"name": "自來水", "cf": 0.01}
 
-# =============================================================
-# 工具函式：碳足跡統一轉為 kgCO2e
-# =============================================================
-def parse_cf_to_kg(value):
-    if pd.isna(value):
-        return 0.0
+drink_data = pd.DataFrame([
+    {"name": "紅茶", "cf": 0.18, "weight": 0.10},
+    {"name": "豆漿", "cf": 0.22, "weight": 0.10},
+])
 
-    if isinstance(value, (int, float)):
-        # 小於 50 視為 kg，大於視為 g
-        return value if value <= 50 else value / 1000
+dessert_data = pd.DataFrame([
+    {"name": "蛋糕", "cf": 0.30, "weight": 0.12},
+    {"name": "餅乾", "cf": 0.20, "weight": 0.08},
+    {"name": "布丁", "cf": 0.25, "weight": 0.10},
+])
 
-    s = str(value).lower().replace(" ", "")
-    s = s.replace("kgco2e", "kg").replace("gco2e", "g")
+# ========== 第一階段：主食 ==========
+st.header("① 主食")
+meal = food_data.sample(3, replace=False).reset_index(drop=True)
+st.dataframe(meal[["name", "cf"]])
 
-    m = re.search(r"([\d\.]+)(kg|g)?", s)
-    if not m:
-        return 0.0
+food_cf = meal["cf"].sum()
+food_weight = meal["weight"].sum()
 
-    num = float(m.group(1))
-    unit = m.group(2)
-
-    if unit == "kg" or (unit is None and num <= 50):
-        return num
-    else:
-        return num / 1000
-
-
-# =============================================================
-# 讀取 Excel
-# =============================================================
-@st.cache_data
-def load_excel(file):
-    df = pd.read_excel(file)
-    df = df.iloc[:, :4]
-    df.columns = ["code", "product_name", "cf_raw", "declared_unit"]
-    df["cf_kgco2e"] = df["cf_raw"].apply(parse_cf_to_kg)
-    return df
-
-
-st.subheader("📂 載入碳足跡資料")
-uploaded = st.file_uploader("請上傳碳足跡 Excel（產品碳足跡3.xlsx）", type=["xlsx"])
-
-if not uploaded:
-    st.stop()
-
-df_all = load_excel(uploaded)
-
-df_food = df_all[df_all["code"] == 1]
-df_drink = df_all[df_all["code"] == 2]
-df_dessert = df_all[df_all["code"] == 3]
-df_packaging = df_all[df_all["code"].astype(str).str.startswith("4")]
-
-# =============================================================
-# 基本資料
-# =============================================================
-st.subheader("👤 基本資料")
-
-student_name = st.text_input("請輸入你的名字")
-
-if "history" not in st.session_state:
-    st.session_state.history = []
-
-# 自動判斷第幾次測試
-previous = [r for r in st.session_state.history if r["student_name"] == student_name]
-test_round = len(previous) + 1 if student_name else None
-
-if student_name:
-    st.info(f"📌 這是 **第 {test_round} 次測試**")
-
-# =============================================================
-# 主餐（抽 3 樣）
-# =============================================================
-st.subheader("🍚 主餐（抽 3 樣）")
-
-if st.button("🎲 抽主餐"):
-    st.session_state.food_pick = df_food.sample(3)
-
-if "food_pick" not in st.session_state:
-    st.session_state.food_pick = df_food.sample(3)
-
-food_df = st.session_state.food_pick
-st.dataframe(food_df[["product_name", "cf_kgco2e"]])
-
-food_sum = food_df["cf_kgco2e"].sum()
-
-# =============================================================
-# 飲料
-# =============================================================
-st.subheader("🥤 飲料")
-
-drink_option = st.radio("是否喝飲料？", ["不喝", "隨機一杯"])
-
-drink_cf = 0.0
-drink_name = "不喝飲料"
-
-if drink_option == "隨機一杯" and len(df_drink) > 0:
-    drink = df_drink.sample(1).iloc[0]
-    drink_cf = drink["cf_kgco2e"]
-    drink_name = drink["product_name"]
-    st.info(f"你喝的是：{drink_name}（{drink_cf:.2f} kgCO₂e）")
-
-# =============================================================
-# 甜點（5 選 2）
-# =============================================================
-st.subheader("🍰 甜點（5 選 2）")
-
-dessert_sum = 0.0
-dessert_selected = []
-
-if len(df_dessert) > 0:
-    if "dessert_pool" not in st.session_state:
-        st.session_state.dessert_pool = df_dessert.sample(min(5, len(df_dessert)))
-
-    options = st.session_state.dessert_pool["product_name"].tolist()
-    dessert_selected = st.multiselect("請選 2 種甜點", options)
-
-    if len(dessert_selected) == 2:
-        dessert_sum = st.session_state.dessert_pool[
-            st.session_state.dessert_pool["product_name"].isin(dessert_selected)
-        ]["cf_kgco2e"].sum()
-
-# =============================================================
-# 餐具 / 包材
-# =============================================================
-st.subheader("🍴 餐具 / 包材（可複選）")
-
-packaging_selected = st.multiselect(
-    "你使用了哪些？",
-    df_packaging["product_name"].tolist()
-)
-
-packaging_sum = df_packaging[
-    df_packaging["product_name"].isin(packaging_selected)
-]["cf_kgco2e"].sum()
-
-# =============================================================
-# 結果計算
-# =============================================================
-total = food_sum + drink_cf + dessert_sum + packaging_sum
-
-st.subheader("✅ 計算結果")
-st.markdown(f"""
-- 🍚 主餐：{food_sum:.2f} kgCO₂e  
-- 🥤 飲料：{drink_cf:.2f} kgCO₂e  
-- 🍰 甜點：{dessert_sum:.2f} kgCO₂e  
-- 🍴 餐具：{packaging_sum:.2f} kgCO₂e  
-
-### 🌍 **總計：{total:.2f} kgCO₂e**
-""")
-
-# =============================================================
-# 圖表
-# =============================================================
-chart_df = pd.DataFrame({
-    "category": ["Food", "Drink", "Dessert", "Packaging"],
-    "kgCO2e": [food_sum, drink_cf, dessert_sum, packaging_sum]
-})
-chart_df = chart_df[chart_df["kgCO2e"] > 0]
-
-bar = alt.Chart(chart_df).mark_bar().encode(
-    x="kgCO2e:Q",
-    y="category:N"
-)
-
-pie = alt.Chart(chart_df).mark_arc().encode(
-    theta="kgCO2e:Q",
-    color="category:N"
-)
-
-st.subheader("📊 碳足跡分佈圖")
-st.altair_chart(bar, use_container_width=True)
-st.altair_chart(pie, use_container_width=True)
-
-# =============================================================
-# 儲存結果
-# =============================================================
-if st.button("💾 儲存結果"):
-    row = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "student_name": student_name,
-        "test_round": test_round,
-        "food_kgco2e": food_sum,
-        "drink_kgco2e": drink_cf,
-        "dessert_kgco2e": dessert_sum,
-        "packaging_kgco2e": packaging_sum,
-        "total_kgco2e": total,
-    }
-    st.session_state.history.append(row)
-    st.success("已儲存！")
-
-# =============================================================
-# 下載 CSV
-# =============================================================
-if st.session_state.history:
-    df_hist = pd.DataFrame(st.session_state.history)
-    csv = df_hist.to_csv(index=False).encode("utf-8-sig")
-
-    st.download_button(
-        "⬇️ 下載個人結果 CSV",
-        data=csv,
-        file_name=f"{student_name}_carbon_results.csv",
-        mime="text/csv"
+# ========== 料理方式 ==========
+st.header("② 料理方式（水煮 / 煎炸）")
+cook_cf = 0.0
+for i, row in meal.iterrows():
+    method = st.radio(
+        f"{row['name']} 的料理方式",
+        ["水煮", "煎炸"],
+        key=f"cook_{i}"
     )
+    if method == "水煮":
+        cook_cf += water["cf"]
+    else:
+        cook_cf += oil["cf"]
+
+# ========== 飲料 ==========
+st.header("③ 飲料")
+drink_choice = st.radio("是否選擇飲料？", ["不喝", "隨機一杯"])
+drink_cf = 0.0
+drink_weight = 0.0
+if drink_choice == "隨機一杯":
+    d = drink_data.sample(1).iloc[0]
+    st.info(f"你選了：{d['name']}")
+    drink_cf = d["cf"]
+    drink_weight = d["weight"]
+
+# ========== 甜點 ==========
+st.header("④ 甜點（選 2）")
+dessert_pick = st.multiselect(
+    "請選 2 種甜點",
+    dessert_data["name"].tolist()
+)
+
+dessert_cf = 0.0
+dessert_weight = 0.0
+if len(dessert_pick) == 2:
+    sel = dessert_data[dessert_data["name"].isin(dessert_pick)]
+    dessert_cf = sel["cf"].sum()
+    dessert_weight = sel["weight"].sum()
+
+# ========== 運輸 ==========
+st.header("⑤ 運輸（最後才計算）")
+
+distance = st.number_input("距離（km）", value=12.0)
+
+transport_mode = st.radio(
+    "你怎麼取得食材？",
+    ["走路", "自己去買（pkm）", "貨車配送（tkm）"]
+)
+
+transport_cf = 0.0
+
+if transport_mode == "走路":
+    st.success("🚶‍♀️ 走路：不計算碳足跡")
+
+elif transport_mode == "自己去買（pkm）":
+    vehicle = st.radio("交通工具", ["機車", "汽車"])
+    ef = 0.0951 if vehicle == "機車" else 0.115
+    transport_cf = distance * ef
+    st.code(f"碳足跡 = 距離 × pkm\n{distance} × {ef} = {transport_cf:.3f} kgCO₂e")
+
+else:
+    tkm_ef = 2.71
+    total_weight_kg = food_weight + drink_weight + dessert_weight
+    total_weight_ton = total_weight_kg / 1000
+
+    transport_cf = distance * total_weight_ton * tkm_ef
+
+    st.markdown("**📦 食材總重量計算**")
+    st.write(f"{total_weight_kg:.2f} kg = {total_weight_ton:.4f} 噸")
+
+    st.code(
+        f"碳足跡 = 距離 × 貨物重量(噸) × tkm 係數\n"
+        f"{distance} × {total_weight_ton:.4f} × {tkm_ef} = {transport_cf:.3f} kgCO₂e"
+    )
+
+# ========== 總計 ==========
+total = food_cf + cook_cf + drink_cf + dessert_cf + transport_cf
+
+st.header("✅ 總碳足跡")
+st.metric("總計 (kgCO₂e)", f"{total:.3f}")

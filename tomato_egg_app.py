@@ -96,7 +96,7 @@ df = df.dropna(subset=["cf"]).reset_index(drop=True)
 # =====================================================
 st.title("🍽️ 一餐的碳足跡大冒險")
 
-geo = streamlit_geolocation(key="geo")
+geo = streamlit_geolocation()
 
 if geo and geo.get("latitude") and st.session_state.origin is None:
     st.session_state.origin = {
@@ -260,3 +260,4 @@ if st.session_state.stage == "dessert":
             "total": final_total,
         })
         st.success("✅ 已儲存，結果已寫入 results.csv")
+

@@ -1,90 +1,101 @@
 
-# carbon_meal_app_COMPLETE_SAFE.py
-# 修正 sample(n=3) 當資料不足時不炸掉
+# carbon_meal_app_COMPLETE_SAFE_V2.py
 
 import streamlit as st
 import pandas as pd
 import random
-import math
 import altair as alt
 import folium
 from streamlit_folium import st_folium
-from datetime import datetime
-import gspread
-from google.oauth2.service_account import Credentials
 
-st.set_page_config(page_title="一餐的碳足跡（FINAL SAFE）", layout="centered")
-st.title("🍱 一餐的碳足跡（FINAL SAFE）")
+st.set_page_config(page_title="一餐的碳足跡（SAFE v2）", layout="centered")
+st.title("🍱 一餐的碳足跡（SAFE v2）")
 
+# ---------- utilities ----------
 @st.cache_data
 def load_data():
     df = pd.read_excel("產品碳足跡3.xlsx")
     df = df.iloc[:, :5]
-    cols = ["code", "name", "cf", "unit", "weight"][: len(df.columns)]
+    cols = ["code", "name", "cf", "unit", "weight"][:len(df.columns)]
     df.columns = cols
     if "weight" not in df.columns:
         df["weight"] = 0.0
     df["code"] = df["code"].astype(str)
+    df["cf"] = pd.to_numeric(df["cf"], errors="coerce").fillna(0.0)
     return df
-
-df = load_data()
-
-food_df = df[df["code"] == "1"]
-oil_df = df[df["code"] == "1-1"]
-water_df = df[df["code"] == "1-2"]
-drink_df = df[df["code"] == "2"]
-dessert_df = df[df["code"] == "3"]
-
-st.subheader("👩‍🎓 學生資訊")
-student_name = st.text_input("姓名（必填）")
-round_tag = st.radio("測驗次數", ["第一次測試", "第二次測試"], horizontal=True)
-
-st.subheader("① 主食")
 
 def safe_sample(df, n):
     if len(df) == 0:
         return df
     return df.sample(n=min(n, len(df)), replace=False).reset_index(drop=True)
 
-meal = safe_sample(food_df, 3)
+# ---------- load ----------
+df = load_data()
+food_df = df[df["code"] == "1"]
+oil_df = df[df["code"] == "1-1"]
+water_df = df[df["code"] == "1-2"]
+drink_df = df[df["code"] == "2"]
+dessert_df = df[df["code"] == "3"]
 
+# ---------- session ----------
+if "meal" not in st.session_state:
+    st.session_state.meal = safe_sample(food_df, 3)
+
+# ---------- student ----------
+st.subheader("👩‍🎓 學生資訊")
+student = st.text_input("姓名（必填）")
+
+# ---------- main food ----------
+st.subheader("① 主食")
+
+if st.button("🔄 更換一組食材"):
+    st.session_state.meal = safe_sample(food_df, 3)
+
+meal = st.session_state.meal
 if meal.empty:
-    st.error("❌ Excel 裡沒有 code=1 的主食資料")
+    st.error("❌ 沒有 code=1 的主食資料")
     st.stop()
 
 st.dataframe(meal[["name", "cf"]])
 
-st.subheader("② 料理方式（1-1 油 / 1-2 水）")
+# ---------- cooking ----------
+st.subheader("② 料理方式（水煮=1-2｜油炸=1-1）")
 cook_cf_total = 0.0
 
 for i, row in meal.iterrows():
     method = st.radio(
-        f"{row['name']} 的料理方式",
+        f"{row['name']}",
         ["水煮", "油炸"],
         key=f"cook_{i}",
         horizontal=True,
     )
+
+    pick_cf = 0.0
+    pick_name = "無"
+
     if method == "水煮" and not water_df.empty:
         pick = water_df.sample(1).iloc[0]
+        pick_cf = float(pick["cf"])
+        pick_name = pick["name"]
+
     elif method == "油炸" and not oil_df.empty:
         pick = oil_df.sample(1).iloc[0]
-    else:
-        pick = None
+        pick_cf = float(pick["cf"])
+        pick_name = pick["name"]
 
-    if pick is not None:
-        cook_cf_total += float(pick["cf"])
-        st.caption(f"→ 使用 {pick['name']}：{pick['cf']} kgCO₂e")
+    cook_cf_total += pick_cf
+    st.caption(f"→ {pick_name}：{pick_cf:.3f} kgCO₂e")
 
+# ---------- drink ----------
 st.subheader("③ 飲料")
 drink_cf = 0.0
 if st.checkbox("我要飲料"):
-    if drink_df.empty:
-        st.warning("沒有飲料資料")
-    else:
+    if not drink_df.empty:
         d = drink_df.sample(1).iloc[0]
         drink_cf = float(d["cf"])
-        st.info(f"{d['name']}：{drink_cf} kgCO₂e")
+        st.info(f"{d['name']}：{drink_cf:.3f} kgCO₂e")
 
+# ---------- dessert ----------
 st.subheader("④ 甜點（選 2）")
 dessert_cf = 0.0
 dessert_pick = st.multiselect(
@@ -95,7 +106,8 @@ dessert_pick = st.multiselect(
 if dessert_pick:
     dessert_cf = dessert_df[dessert_df["name"].isin(dessert_pick)]["cf"].sum()
 
-st.subheader("⑤ 運輸（延噸公里）")
+# ---------- transport ----------
+st.subheader("⑤ 運輸（地圖＋延噸公里）")
 transport_mode = st.radio("交通方式", ["走路", "汽車"], horizontal=True)
 
 transport_cf = 0.0
@@ -111,6 +123,7 @@ if transport_mode != "走路" and state.get("last_clicked"):
     transport_cf = distance_km * total_weight_ton * tkm
     formula = f"{distance_km} × {total_weight_ton:.4f} × {tkm} = {transport_cf:.3f}"
 
+# ---------- total ----------
 food_cf = meal["cf"].sum()
 total = food_cf + cook_cf_total + drink_cf + dessert_cf + transport_cf
 
@@ -127,6 +140,7 @@ st.markdown(f"""
 if formula:
     st.caption("運輸公式：" + formula)
 
+# ---------- charts ----------
 chart_df = pd.DataFrame([
     {"項目": "主食", "kgCO2e": food_cf},
     {"項目": "料理", "kgCO2e": cook_cf_total},

@@ -1,166 +1,142 @@
 
-# tomato_egg_app_with_charts_and_round.py
-# -------------------------------------
-# 重點功能：
-# 1. 保留並顯示圓餅圖、長條圖
-# 2. 將「一開始輸入的名字 student_name」寫入結果
-# 3. 新增 test_round（第一次測試 / 第二次測試）欄位
-# 4. 使用 spreadsheet_id + open_by_key（不需 Drive API）
+# tomato_egg_app_auto_round.py
+# 說明：
+# 1. 自動判斷第幾次測試（依 student_name + Google Sheet 已存在次數）
+# 2. 保留圖表、CSV 下載、Google Sheet 寫入
+# 3. 若 Google Sheet 不可用，仍可正常跑完整流程
+#
+# ⚠️ 這是「示範完整版骨架」，你可以直接覆蓋原本 tomato_egg_app.py 使用
 
 import streamlit as st
 import pandas as pd
-import altair as alt
 from datetime import datetime
-
-import gspread
-from google.oauth2.service_account import Credentials
-
+import altair as alt
 
 # =========================
-# Google Sheet helper
+# Google Sheet utilities
 # =========================
 def get_gspread_client():
-    creds_dict = dict(st.secrets["gcp_service_account"])
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    creds = Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]),
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ],
+    )
     return gspread.authorize(creds)
 
 
-def append_row_to_sheet(row: dict):
-    gc = get_gspread_client()
-    sh = gc.open_by_key(st.secrets["google_sheet"]["spreadsheet_id"])
-    ws = sh.worksheet(st.secrets["google_sheet"]["worksheet_name"])
+def get_test_round(student_name: str) -> str:
+    """依 Google Sheet 內該學生出現次數，自動判斷第幾次測試"""
+    try:
+        gc = get_gspread_client()
+        sheet_id = st.secrets["google_sheet"]["spreadsheet_id"]
+        ws_name = st.secrets["google_sheet"]["worksheet_name"]
 
-    existing = ws.get_all_values()
-    if not existing:
+        sh = gc.open_by_key(sheet_id)
+        ws = sh.worksheet(ws_name)
+
+        records = ws.get_all_records()
+        df = pd.DataFrame(records)
+
+        if "student_name" not in df.columns:
+            return "第一次測試"
+
+        count = (df["student_name"] == student_name).sum()
+        return f"第{count + 1}次測試"
+
+    except Exception:
+        return "第一次測試"
+
+
+def append_to_sheet(row: dict):
+    gc = get_gspread_client()
+    sheet_id = st.secrets["google_sheet"]["spreadsheet_id"]
+    ws_name = st.secrets["google_sheet"]["worksheet_name"]
+
+    sh = gc.open_by_key(sheet_id)
+    ws = sh.worksheet(ws_name)
+
+    if not ws.get_all_values():
         ws.append_row(list(row.keys()))
 
     ws.append_row(list(row.values()))
 
 
 # =========================
-# Session state
+# UI
 # =========================
-st.session_state.setdefault("student_name", "")
-st.session_state.setdefault("test_round", "第一次測試")
+st.set_page_config(page_title="一餐的碳足跡計算（教學版）", page_icon="🍅")
 
-
-# =========================
-# UI：基本資料
-# =========================
 st.title("🍅🥚 一餐的碳足跡計算（教學版）")
 
-st.subheader("👤 基本資料")
+student_name = st.text_input("請輸入姓名")
 
-st.session_state.student_name = st.text_input(
-    "請輸入你的名字",
-    value=st.session_state.student_name,
-)
+if student_name:
+    test_round = get_test_round(student_name)
+    st.info(f"系統判斷：**{test_round}**")
 
-st.session_state.test_round = st.radio(
-    "這是第幾次測試？",
-    ["第一次測試", "第二次測試"],
-    horizontal=True,
-)
+    # 假資料（你可以接回原本完整計算結果）
+    food = 1.2
+    drink = 0.5
+    transport = 1.3
 
+    total = food + drink + transport
 
-# =========================
-# 假資料（示範用，可換成你原本計算結果）
-# =========================
-food = 1.2
-drink = 0.4
-transport = 0.8
-dessert = 0.6
-
-total = food + drink + transport + dessert
-
-
-# =========================
-# 圖表資料
-# =========================
-chart_df = pd.DataFrame(
-    [
-        {"category": "Food", "kgCO2e": food},
-        {"category": "Drink", "kgCO2e": drink},
-        {"category": "Transport", "kgCO2e": transport},
-        {"category": "Dessert", "kgCO2e": dessert},
-    ]
-)
-
-chart_df["percent"] = chart_df["kgCO2e"] / chart_df["kgCO2e"].sum()
-
-
-# =========================
-# 顯示圖表
-# =========================
-st.subheader("📊 碳足跡分布圖")
-
-bar = (
-    alt.Chart(chart_df)
-    .mark_bar()
-    .encode(
-        y=alt.Y("category:N", sort="-x", title=""),
-        x=alt.X("kgCO2e:Q", title="kg CO₂e"),
-        tooltip=["category", "kgCO2e"],
+    df_chart = pd.DataFrame(
+        {
+            "category": ["Food", "Drink", "Transport"],
+            "kgCO2e": [food, drink, transport],
+        }
     )
-)
 
-pie = (
-    alt.Chart(chart_df)
-    .mark_arc()
-    .encode(
-        theta="kgCO2e:Q",
-        color="category:N",
-        tooltip=["category", "kgCO2e"],
+    st.subheader("📊 碳足跡分布圖")
+    bar = (
+        alt.Chart(df_chart)
+        .mark_bar()
+        .encode(x="kgCO2e:Q", y="category:N")
     )
-)
+    pie = (
+        alt.Chart(df_chart)
+        .mark_arc()
+        .encode(theta="kgCO2e:Q", color="category:N")
+    )
 
-st.altair_chart(bar, use_container_width=True)
-st.altair_chart(pie, use_container_width=True)
+    st.altair_chart(bar, use_container_width=True)
+    st.altair_chart(pie, use_container_width=True)
 
+    st.subheader("✅ 計算結果")
+    st.write(f"學生姓名：{student_name}")
+    st.write(f"測試次數：{test_round}")
+    st.write(f"總碳排：{total:.2f} kgCO₂e")
 
-# =========================
-# 結果顯示
-# =========================
-st.subheader("✅ 計算結果")
-
-st.markdown(f"""
-- **學生姓名**：{st.session_state.student_name}
-- **測試次數**：{st.session_state.test_round}
-- **總碳足跡**：**{total:.2f} kgCO₂e**
-""")
-
-
-# =========================
-# 寫入 Google Sheet
-# =========================
-st.subheader("🧾 寫入全班 Google Sheet")
-
-if st.button("📤 送出結果"):
     row = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "student_name": st.session_state.student_name,
-        "test_round": st.session_state.test_round,
+        "student_name": student_name,
+        "test_round": test_round,
+        "total_kgco2e": total,
         "food_kgco2e": food,
         "drink_kgco2e": drink,
         "transport_kgco2e": transport,
-        "dessert_kgco2e": dessert,
-        "total_kgco2e": total,
     }
 
-    append_row_to_sheet(row)
-    st.success("✅ 已成功寫入 Google Sheet！")
+    # CSV 下載
+    csv = pd.DataFrame([row]).to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "⬇️ 下載個人結果",
+        data=csv,
+        file_name=f"{student_name}_{test_round}.csv",
+        mime="text/csv",
+    )
 
-
-# =========================
-# CSV 下載
-# =========================
-st.subheader("⬇️ 下載個人結果")
-
-csv = pd.DataFrame([row]).to_csv(index=False).encode("utf-8-sig")
-st.download_button(
-    "下載 CSV",
-    data=csv,
-    file_name=f"{st.session_state.student_name}_{st.session_state.test_round}.csv",
-    mime="text/csv",
-)
+    # Google Sheet
+    if st.button("📤 寫入全班 Google Sheet"):
+        try:
+            append_to_sheet(row)
+            st.success("已成功寫入 Google Sheet")
+        except Exception as e:
+            st.error("寫入失敗")
+            st.exception(e)

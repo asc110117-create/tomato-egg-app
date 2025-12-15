@@ -764,3 +764,116 @@ pie = (
 st.altair_chart(pie, use_container_width=True)
 
 st.caption("圖表分類用英文（Food/Cooking/Drink/Transport）避免中文缺字。")
+
+if st.session_state.stage == "dessert":
+    st.divider()
+    st.subheader("🍰 今日甜點與餐具選擇")
+
+    # ========= 甜點：抽 3 選 2 =========
+    df_dessert = df_all[df_all["code"] == "3"].copy()
+
+    if len(df_dessert) < 3:
+        st.error("甜點資料不足（code=3 至少需要 3 筆）")
+        st.stop()
+
+    # 第一次進來才抽
+    if "dessert_pool" not in st.session_state:
+        st.session_state.dessert_pool = df_dessert.sample(3).reset_index(drop=True)
+
+    dessert_pool = st.session_state.dessert_pool
+
+    st.markdown("### 🎲 今日甜點（請從 3 種中選 2 種）")
+
+    dessert_choices = st.multiselect(
+        "請選擇 2 種甜點",
+        options=dessert_pool.index.tolist(),
+        format_func=lambda i: f"{dessert_pool.loc[i,'product_name']}（{dessert_pool.loc[i,'cf_kgco2e']:.3f} kgCO₂e）",
+        max_selections=2,
+    )
+
+    dessert_cf = 0.0
+    if len(dessert_choices) == 2:
+        dessert_cf = dessert_pool.loc[dessert_choices, "cf_kgco2e"].sum()
+        st.success(f"甜點碳足跡小計：**{dessert_cf:.3f} kgCO₂e**")
+    else:
+        st.warning("請務必選擇 2 種甜點")
+
+    # ========= 餐具 / 包材（可複選，可不選） =========
+    st.markdown("### 🍴 餐具／包材（可不選，可複選）")
+
+    df_utensil = df_all[df_all["code"].astype(str).str.startswith("4-")].copy()
+
+    utensil_map = {
+        row["product_name"]: row["cf_kgco2e"]
+        for _, row in df_utensil.iterrows()
+    }
+
+    selected_utensils = st.multiselect(
+        "請選擇使用的餐具／包材",
+        list(utensil_map.keys()),
+    )
+
+    utensil_cf = sum(utensil_map[u] for u in selected_utensils)
+
+    if selected_utensils:
+        st.info(f"餐具碳足跡小計：**{utensil_cf:.3f} kgCO₂e**")
+    else:
+        st.caption("未使用餐具／包材")
+
+    # ========= 內用 / 帶回 =========
+    st.markdown("### 🏫 內用或帶回")
+
+    eat_mode = st.radio(
+        "請選擇方式",
+        ["內用", "帶回國立臺中教育大學"],
+        horizontal=True,
+    )
+
+    dessert_transport_cf = 0.0
+
+    if eat_mode == "內用":
+        st.success("內用：不增加交通碳足跡")
+
+    else:
+        st.warning("帶回將計算一次交通碳足跡")
+
+        # 台中教育大學（固定）
+        NTCU_LAT = 24.1437
+        NTCU_LNG = 120.6736
+
+        origin = st.session_state.origin
+        o_lat, o_lng = origin["lat"], origin["lng"]
+
+        one_way = haversine_km(o_lat, o_lng, NTCU_LAT, NTCU_LNG)
+        rt = bool(st.session_state.get("round_trip", True))
+        ef = float(st.session_state.get("ef_final", 0.0))
+
+        trip_km = one_way * (2 if rt else 1)
+        dessert_transport_cf = trip_km * ef
+
+        st.info(
+            f"""
+📍 甜點帶回路線  
+- 單程距離：約 **{one_way:.2f} km**  
+- {'來回' if rt else '單程'}里程：約 **{trip_km:.2f} km**  
+- 交通碳足跡：**{dessert_transport_cf:.3f} kgCO₂e**
+"""
+        )
+
+    # ========= 最終加總 =========
+    if len(dessert_choices) == 2:
+        final_total = total + dessert_cf + utensil_cf + dessert_transport_cf
+
+        st.divider()
+        st.subheader("🍽️ 含甜點的最終碳足跡")
+
+        st.markdown(
+            f"""
+- 原本餐點總計：`{total:.3f}` kgCO₂e  
+- 甜點：`{dessert_cf:.3f}` kgCO₂e  
+- 餐具／包材：`{utensil_cf:.3f}` kgCO₂e  
+- 甜點交通：`{dessert_transport_cf:.3f}` kgCO₂e  
+
+### ✅ **最終總碳足跡：{final_total:.3f} kgCO₂e**
+"""
+        )

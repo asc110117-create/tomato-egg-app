@@ -17,7 +17,9 @@ def append_row_to_sheet(row_dict: dict):
     sheet_name = st.secrets["google_sheet"]["spreadsheet_name"]
     ws_name = st.secrets["google_sheet"]["worksheet_name"]
 
-    sh = gc.open(sheet_name)
+    sheet_id = st.secrets["google_sheet"]["spreadsheet_id"]
+    sh = gc.open_by_key(sheet_id)
+
     ws = sh.worksheet(ws_name)
 
     # 若第一列(表頭)是空的，就先寫入表頭
@@ -1167,4 +1169,5 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+
 

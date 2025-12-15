@@ -6,3 +6,5 @@ requests
 folium
 streamlit-folium
 streamlit-geolocation
+gspread
+google-auth

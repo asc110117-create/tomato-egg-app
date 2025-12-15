@@ -1,6 +1,16 @@
 # app.py
-# ✅ 搜尋「全聯」後，地圖出現多個可點的分店標記（不用滑桿/下拉）
-# ✅ 點標記 -> 一鍵加入採買點 -> 自動計算交通碳足跡
+# ✅ 一餐的碳足跡大冒險：從農場到你的胃
+# ✅ 新增：搜尋「全聯」等關鍵字 → 地圖顯示最近 5 個分店（1~5 編號）→ 使用者做決策（radio）→ 按「確認」才加入採買點並計算交通碳足跡
+#
+# 依賴套件（requirements.txt 建議）
+# streamlit
+# pandas
+# openpyxl
+# altair
+# requests
+# folium
+# streamlit-folium
+# streamlit-geolocation
 
 import re
 import random
@@ -37,6 +47,7 @@ h1, h2, h3 { letter-spacing: 0.2px; }
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(255,255,255,0.03);
 }
+.small-note { opacity: 0.8; font-size: 0.92rem; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -57,7 +68,6 @@ VALID_IDS = {
 def parse_cf_to_kg(value) -> float:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return float("nan")
-
     if isinstance(value, (int, float)):
         return float(value)
 
@@ -68,20 +78,21 @@ def parse_cf_to_kg(value) -> float:
     if re.fullmatch(r"[-+]?\d*\.?\d+k", s):
         return float(s[:-1])
 
+    # number + optional unit
     m = re.match(r"([-+]?\d*\.?\d+)(kg|g)?$", s)
     if m:
         num = float(m.group(1))
         unit = m.group(2)
-        if unit == "g":
-            return num / 1000.0
-        return num
+        return num / 1000.0 if unit == "g" else num
 
+    # embedded unit
     m2 = re.search(r"([-+]?\d*\.?\d+)\s*(kg|g)", s)
     if m2:
         num = float(m2.group(1))
         unit = m2.group(2)
         return num / 1000.0 if unit == "g" else num
 
+    # fallback first number as kg
     m3 = re.search(r"([-+]?\d*\.?\d+)", s)
     if m3:
         return float(m3.group(1))
@@ -104,7 +115,7 @@ def haversine_km(lat1, lon1, lat2, lon2):
 # =========================
 # 1-3) 工具：地點搜尋（OSM Nominatim）
 # =========================
-def nominatim_search(query: str, limit: int = 12):
+def nominatim_search(query: str, limit: int = 25):
     if not query.strip():
         return []
 
@@ -116,6 +127,7 @@ def nominatim_search(query: str, limit: int = 12):
         "addressdetails": 1,
     }
     headers = {
+        # Nominatim 需要清楚的 User-Agent（請改成你的專案資訊）
         "User-Agent": "carbon-footprint-streamlit-app/1.0 (contact: your-project)",
         "Accept-Language": "zh-TW,zh,en",
     }
@@ -137,31 +149,17 @@ def nominatim_search(query: str, limit: int = 12):
     return out
 
 
-def best_match_by_latlng(results, lat, lng, tol=1e-6):
-    """
-    用座標比對找出你點到哪個搜尋結果 marker。
-    tol 用很小即可（folium marker 會回傳原座標）。
-    """
-    if not results:
-        return None
-    best = None
-    best_d = 10**9
-    for r in results:
-        d = abs(r["lat"] - lat) + abs(r["lng"] - lng)
-        if d < best_d:
-            best_d = d
-            best = r
-    return best if best_d <= tol else None
-
-
 # =========================
-# 2) 讀 Excel：前 4 欄
+# 2) 讀取 Excel：前 4 欄 -> code/name/cf/unit
 # =========================
 @st.cache_data(show_spinner=False)
 def load_data_from_excel(file_bytes: bytes, filename: str) -> pd.DataFrame:
     df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
+
     if df.shape[1] < 4:
-        raise ValueError("Excel 欄位太少，至少需要 4 欄：編號、品名、碳足跡、宣告單位。")
+        raise ValueError(
+            f"Excel 欄位太少（目前 {df.shape[1]} 欄）。至少需要 4 欄：編號、品名、碳足跡、宣告單位。"
+        )
 
     cols = list(df.columns[:4])
     df = df[cols].copy()
@@ -178,6 +176,7 @@ def load_data_from_excel(file_bytes: bytes, filename: str) -> pd.DataFrame:
 
 def read_excel_source() -> pd.DataFrame:
     st.caption("📄 資料來源：優先讀取專案根目錄的 Excel；若讀不到可改用上傳。")
+
     try:
         with open(EXCEL_PATH_DEFAULT, "rb") as f:
             file_bytes = f.read()
@@ -239,14 +238,17 @@ if "drink_mode" not in st.session_state:
 if "drink_pick" not in st.session_state:
     st.session_state.drink_pick = None
 
+# 採買點（已加入、會納入交通計算）
 if "store_points" not in st.session_state:
-    st.session_state.store_points = []  # 已加入採買點（綠色）
+    st.session_state.store_points = []  # [{"name":..., "lat":..., "lng":...}]
 
+# 搜尋出來、顯示在地圖上用（不會自動加入）
 if "search_results" not in st.session_state:
-    st.session_state.search_results = []  # 搜尋出的分店（橘色）
+    st.session_state.search_results = []  # 最近 5 家
 
-if "clicked_search" not in st.session_state:
-    st.session_state.clicked_search = None  # 你點到哪個搜尋分店
+# 決策：目前選中的 index
+if "decision_idx" not in st.session_state:
+    st.session_state.decision_idx = 0
 
 
 # =========================
@@ -293,7 +295,7 @@ if st.session_state.page == "home":
 - 抽 3 項食材
 - 每道餐選擇水煮/煎炸（系統配對油或水）
 - 飲料可選
-- **新增：搜尋「全聯」後，地圖會出現多個可點分店標記**
+- **新增：搜尋店名（例如全聯）→ 地圖顯示最近 5 家（1~5）→ 你要做決策選一間 → 按確認才加入計算**
 """
             )
             if st.button("🍴 開始點餐", use_container_width=True):
@@ -307,7 +309,7 @@ if st.session_state.page == "home":
 
 
 # =========================
-# 6) 主頁
+# 6) 主頁：讀 Excel
 # =========================
 try:
     df_all = read_excel_source()
@@ -325,6 +327,7 @@ if len(df_food) == 0:
     st.error("Excel 裡找不到 code=1 的食材。請確認你的『編號』欄有 1。")
     st.stop()
 
+# 上方控制：抽食材 / 重置
 c1, c2 = st.columns([1, 1])
 with c1:
     if st.button("🎲 抽 3 項食材（主餐）", use_container_width=True):
@@ -340,9 +343,10 @@ with c2:
             st.session_state[k] = None if k in ["meal_items", "drink_pick"] else {}
         st.session_state.store_points = []
         st.session_state.search_results = []
-        st.session_state.clicked_search = None
+        st.session_state.decision_idx = 0
         st.rerun()
 
+# 預設先抽一次
 if st.session_state.meal_items is None:
     st.session_state.meal_items = sample_rows(df_all, "1", 3)
     st.session_state.cook_method = {i: "水煮" for i in range(len(st.session_state.meal_items))}
@@ -367,11 +371,14 @@ st.dataframe(
     height=160,
 )
 
+# 料理選擇（逐道餐）
 st.subheader("🍳 選擇調理方式（每道餐各選一次）")
+
 for i in range(len(meal_df)):
     item_name = meal_df.loc[i, "product_name"]
     item_cf = float(meal_df.loc[i, "cf_kgco2e"])
 
+    # 確保 cook_picks 有值
     if i not in st.session_state.cook_picks:
         method = st.session_state.cook_method.get(i, "水煮")
         st.session_state.cook_picks[i] = pick_one(df_all, "1-1" if method == "煎炸" else "1-2")
@@ -381,9 +388,17 @@ for i in range(len(meal_df)):
     oil_text = "（找不到油品資料 code=1-1）"
     water_text = "（找不到水品資料 code=1-2）"
     if len(df_oil) > 0:
-        oil_text = f"（{pick['product_name']} / {pick['cf_kgco2e']:.3f}）" if pick["code"] == "1-1" else f"（隨機油品 / 參考 {df_oil.iloc[0]['cf_kgco2e']:.3f}）"
+        oil_text = (
+            f"（{pick['product_name']} / {pick['cf_kgco2e']:.3f}）"
+            if pick["code"] == "1-1"
+            else f"（隨機油品 / 參考 {df_oil.iloc[0]['cf_kgco2e']:.3f}）"
+        )
     if len(df_water) > 0:
-        water_text = f"（{pick['product_name']} / {pick['cf_kgco2e']:.3f}）" if pick["code"] == "1-2" else f"（隨機水品 / 參考 {df_water.iloc[0]['cf_kgco2e']:.3f}）"
+        water_text = (
+            f"（{pick['product_name']} / {pick['cf_kgco2e']:.3f}）"
+            if pick["code"] == "1-2"
+            else f"（隨機水品 / 參考 {df_water.iloc[0]['cf_kgco2e']:.3f}）"
+        )
 
     st.markdown(f"**第 {i+1} 道餐：{item_name}**（食材 {item_cf:.3f} kgCO₂e）")
 
@@ -408,6 +423,7 @@ for i in range(len(meal_df)):
 
     st.divider()
 
+# 飲料（兩個選項）
 st.subheader("🥤 飲料（可選）")
 drink_mode = st.radio(
     "飲料選項",
@@ -419,30 +435,39 @@ drink_mode = st.radio(
 
 if drink_mode != st.session_state.drink_mode:
     st.session_state.drink_mode = drink_mode
-    st.session_state.drink_pick = None if drink_mode == "我不喝飲料" else (pick_one(df_all, "2") if len(df_drink) > 0 else None)
+    if drink_mode == "我不喝飲料":
+        st.session_state.drink_pick = None
+    else:
+        st.session_state.drink_pick = pick_one(df_all, "2") if len(df_drink) > 0 else None
     st.rerun()
 
-if st.session_state.drink_mode == "隨機生成飲料":
-    if st.button("🔄 換一杯飲料", use_container_width=True):
-        st.session_state.drink_pick = pick_one(df_all, "2") if len(df_drink) > 0 else None
-        st.rerun()
+colD1, colD2 = st.columns([1, 1])
+with colD1:
+    if st.session_state.drink_mode == "隨機生成飲料":
+        if st.button("🔄 換一杯飲料", use_container_width=True):
+            st.session_state.drink_pick = pick_one(df_all, "2") if len(df_drink) > 0 else None
+            st.rerun()
 
 drink_cf = 0.0
 drink_name = "不喝飲料"
-if st.session_state.drink_mode == "隨機生成飲料" and len(df_drink) > 0:
-    if st.session_state.drink_pick is None:
-        st.session_state.drink_pick = pick_one(df_all, "2")
-    dp = st.session_state.drink_pick
-    drink_cf = float(dp["cf_kgco2e"])
-    drink_name = dp["product_name"]
-    st.info(f"本次飲料：**{drink_name}**（{drink_cf:.3f} kgCO₂e）")
+if st.session_state.drink_mode == "隨機生成飲料":
+    if len(df_drink) == 0:
+        st.warning("找不到 code=2 的飲料資料，因此目前飲料固定為：不喝飲料。")
+        st.session_state.drink_pick = None
+    else:
+        if st.session_state.drink_pick is None:
+            st.session_state.drink_pick = pick_one(df_all, "2")
+        dp = st.session_state.drink_pick
+        drink_cf = float(dp["cf_kgco2e"])
+        drink_name = dp["product_name"]
+        st.info(f"本次飲料：**{drink_name}**（{drink_cf:.3f} kgCO₂e）")
 
 
 # =========================
-# 採買地點與交通碳足跡（搜尋結果直接打點到地圖）
+# ✅ 採買地點：搜尋顯示最近 5 家（1~5） + 決策後才加入
 # =========================
-st.subheader("🧭 採買地點與交通碳足跡（搜尋後地圖可點分店）")
-st.caption("流程：允許定位 → 搜尋（例如全聯）→ 地圖出現多個橘色分店點 → 點其中一個 → 加入採買點")
+st.subheader("🧭 採買地點與交通碳足跡（搜尋→顯示→做決策→確認）")
+st.caption("流程：允許定位 → 搜尋（例如全聯）→ 地圖顯示最近 5 家（1~5）→ 你做決策選一間 → 按確認才加入採買點 → 計算交通碳足跡（直線距離）")
 
 transport_cf = 0.0
 transport_km_total = 0.0
@@ -455,6 +480,7 @@ else:
     user_lng = float(loc["longitude"])
     st.success(f"你的位置：{user_lat:.6f}, {user_lng:.6f}")
 
+    # 你提供的係數（kgCO2e / pkm；此處用 km 近似 pkm）
     EF_PRESET = {
         "機車（0.0951 kgCO₂e/km）": 9.51e-2,
         "自用小客車(汽油)（0.115 kgCO₂e/km）": 1.15e-1,
@@ -473,27 +499,27 @@ else:
     with a3:
         round_trip = st.checkbox("算來回（去＋回）", value=True, key="transport_round_trip")
 
-    st.markdown("### 🔎 搜尋分店並顯示在地圖（例如：全聯）")
-    q = st.text_input("搜尋關鍵字", placeholder="例如：全聯、家樂福、第二市場", key="place_query")
+    st.markdown("### 🔎 搜尋分店並顯示最近 5 個點（例如：全聯）")
+    q = st.text_input("搜尋關鍵關字", placeholder="例如：全聯、家樂福、第二市場", key="place_query")
+
     colS1, colS2 = st.columns([1, 1])
     with colS1:
-        if st.button("🔍 搜尋並打點到地圖", use_container_width=True):
+        if st.button("🔍 搜尋並顯示最近 5 家", use_container_width=True):
             try:
-                raw = nominatim_search(q, limit=12)
-
-                # 計算距離並排序（近→遠），只留前 8 個（避免太滿）
+                raw = nominatim_search(q, limit=25)  # 多抓再挑最近
                 results = []
                 for r in raw:
                     d = haversine_km(user_lat, user_lng, r["lat"], r["lng"])
                     rr = dict(r)
                     rr["dist_km"] = d
                     results.append(rr)
-                results.sort(key=lambda x: x["dist_km"])
-                st.session_state.search_results = results[:8]
 
-                st.session_state.clicked_search = None
+                results.sort(key=lambda x: x["dist_km"])  # 近→遠
+                st.session_state.search_results = results[:5]  # ✅ 最近 5 家
+                st.session_state.decision_idx = 0
             except Exception as e:
                 st.session_state.search_results = []
+                st.session_state.decision_idx = 0
                 st.error("搜尋失敗（可能是網路或服務限制）。請換關鍵字或稍後再試。")
                 st.exception(e)
             st.rerun()
@@ -501,10 +527,12 @@ else:
     with colS2:
         if st.button("🧹 清空搜尋分店點", use_container_width=True):
             st.session_state.search_results = []
-            st.session_state.clicked_search = None
+            st.session_state.decision_idx = 0
             st.rerun()
 
-    # 地圖：藍=你的位置、綠=已加入採買點、橘=搜尋到的分店（可點）
+    # 地圖：藍=你的位置、綠=已加入採買點、橘=搜尋結果（1~5 編號）
+    st.markdown("### 🗺️ 地圖（顯示最近 5 家分店：1~5）")
+
     m = folium.Map(location=[user_lat, user_lng], zoom_start=14)
 
     folium.Marker(
@@ -520,63 +548,91 @@ else:
             icon=folium.Icon(color="green", icon="shopping-cart"),
         ).add_to(m)
 
-    for idx, r in enumerate(st.session_state.search_results):
+    bounds = [[user_lat, user_lng]]
+    for idx, r in enumerate(st.session_state.search_results, start=1):
         title = r["display_name"].split(",")[0].strip()
+        bounds.append([r["lat"], r["lng"]])
+
+        # 橘色 pin
         folium.Marker(
             [r["lat"], r["lng"]],
-            tooltip=f"{title}（約 {r['dist_km']:.2f} km）",
+            tooltip=f"{idx}. {title}（約 {r['dist_km']:.2f} km）",
             popup=r["display_name"],
             icon=folium.Icon(color="orange", icon="info-sign"),
         ).add_to(m)
 
-    st.markdown("### 🗺️ 地圖（點橘色分店點即可選）")
-    map_ret = st_folium(m, height=420, use_container_width=True)
+        # 編號貼紙
+        folium.Marker(
+            [r["lat"], r["lng"]],
+            icon=folium.DivIcon(
+                html=f"""
+                <div style="
+                    background: rgba(255,255,255,0.92);
+                    border: 2px solid #ff9800;
+                    border-radius: 999px;
+                    width: 26px; height: 26px;
+                    text-align: center;
+                    line-height: 22px;
+                    font-weight: 700;
+                    font-size: 14px;
+                ">{idx}</div>
+                """
+            ),
+        ).add_to(m)
 
-    # 判斷你點到的是「搜尋分店 marker」還是「地圖空白」
-    # - 點 marker 時，streamlit-folium 通常會有 last_object_clicked
-    clicked_obj = map_ret.get("last_object_clicked") if map_ret else None
-    clicked_any = map_ret.get("last_clicked") if map_ret else None
+    if len(bounds) >= 2:
+        m.fit_bounds(bounds)
 
-    # 先嘗試 marker click（橘色分店 marker）
-    if clicked_obj and isinstance(clicked_obj, dict) and "lat" in clicked_obj and "lng" in clicked_obj:
-        match = best_match_by_latlng(st.session_state.search_results, float(clicked_obj["lat"]), float(clicked_obj["lng"]))
-        if match:
-            st.session_state.clicked_search = match
+    st.caption(f"🔎 目前顯示分店數：{len(st.session_state.search_results)}")
+    _ = st_folium(m, height=420, use_container_width=True)
 
-    # ---------- 點到某個搜尋分店：顯示加入按鈕 ----------
-    if st.session_state.clicked_search:
-        r = st.session_state.clicked_search
-        default_name = r["display_name"].split(",")[0].strip()
-        st.info(f"你選到的分店：**{default_name}**（約 {r.get('dist_km', 0):.2f} km）")
-        rename = st.text_input("採買地點名稱（可改名）", value=default_name, key="rename_selected_store")
+    # ✅ 決策區：你要選哪一個點（不會自動加入）
+    st.markdown("### 🧠 做決策：決定要去哪一個採買點")
 
-        if st.button("➕ 加入採買點（你剛剛點的分店）", use_container_width=True):
+    if st.session_state.search_results:
+        option_texts = []
+        for idx, r in enumerate(st.session_state.search_results, start=1):
+            name = r["display_name"].split(",")[0].strip()
+            option_texts.append(f"{idx}. {name}（約 {r['dist_km']:.2f} km）")
+
+        # 用 index 控制「選到哪一個」
+        chosen_text = st.radio(
+            "請選擇一個你『實際會去』的分店",
+            option_texts,
+            index=int(st.session_state.decision_idx),
+            key="decision_radio_text",
+        )
+        chosen_idx = int(chosen_text.split(".")[0]) - 1
+        st.session_state.decision_idx = chosen_idx
+
+        chosen_store = st.session_state.search_results[chosen_idx]
+        chosen_name = chosen_store["display_name"].split(",")[0].strip()
+
+        st.info(
+            f"你目前選擇：**{chosen_name}**\n\n"
+            f"- 單程距離：約 **{chosen_store['dist_km']:.2f} km**\n"
+            f"- {'來回' if round_trip else '單程'}里程："
+            f"約 **{chosen_store['dist_km'] * (2 if round_trip else 1):.2f} km**"
+        )
+
+        if st.button("✅ 確認此採買點（加入計算）", use_container_width=True):
             st.session_state.store_points.append(
-                {"name": rename.strip() or default_name, "lat": float(r["lat"]), "lng": float(r["lng"])}
+                {
+                    "name": chosen_name,
+                    "lat": float(chosen_store["lat"]),
+                    "lng": float(chosen_store["lng"]),
+                }
             )
-            st.session_state.clicked_search = None
+            st.success("已加入採買點，會納入交通碳足跡計算。")
             st.rerun()
 
-    # ---------- 仍保留：點地圖空白處新增採買點 ----------
-    st.markdown("### ➕ 也可以點地圖空白處新增採買點（非分店）")
-    if clicked_any and isinstance(clicked_any, dict) and "lat" in clicked_any and "lng" in clicked_any:
-        st.caption(f"你點的座標：{clicked_any['lat']:.6f}, {clicked_any['lng']:.6f}")
-        manual_name = st.text_input("自訂採買點名稱", value=f"採買點 {len(st.session_state.store_points)+1}", key="manual_store_name")
-        if st.button("➕ 新增採買點（由地圖點選空白處）", use_container_width=True):
-            st.session_state.store_points.append(
-                {"name": manual_name.strip() or "採買點", "lat": float(clicked_any["lat"]), "lng": float(clicked_any["lng"])}
-            )
-            st.rerun()
-
-    colC1, colC2 = st.columns([1, 1])
-    with colC1:
-        if st.button("🧹 清空採買點", use_container_width=True):
+        if st.button("🗑️ 清空已加入採買點", use_container_width=True):
             st.session_state.store_points = []
             st.rerun()
-    with colC2:
-        st.write("")
+    else:
+        st.warning("請先搜尋（例如：全聯），地圖會顯示最近 5 家，才能做決策。")
 
-    # ---------- 計算交通碳足跡 ----------
+    # 交通碳足跡：只計算「已加入採買點」（綠色）
     if st.session_state.store_points and ef > 0:
         rows_t = []
         for p in st.session_state.store_points:
@@ -597,13 +653,13 @@ else:
             )
 
         st.dataframe(pd.DataFrame(rows_t), use_container_width=True)
-        st.success(f"交通里程合計：{transport_km_total:.3f} km；交通碳足跡合計：{transport_cf:.3f} kgCO₂e")
+        st.success(f"交通里程合計：**{transport_km_total:.3f} km**；交通碳足跡合計：✅ **{transport_cf:.3f} kgCO₂e**")
     else:
-        st.warning("尚未新增採買點，因此交通碳足跡目前為 0。")
+        st.warning("尚未加入採買點（綠色），因此交通碳足跡目前為 0。")
 
 
 # =========================
-# 7) 組合表格
+# 7) 組合表格（食材底色 + 料理方式資訊）
 # =========================
 rows = []
 food_sum = 0.0
@@ -651,7 +707,7 @@ st.dataframe(style_combo(combo_df), use_container_width=True, height=220)
 
 
 # =========================
-# 8) 加總 + 圖表
+# 8) 總碳足跡 + 圖表
 # =========================
 total = food_sum + cook_sum + drink_cf + transport_cf
 
@@ -667,6 +723,7 @@ st.markdown(
 )
 
 st.subheader("📊 圖表（選項一改就更新）")
+
 chart_data = pd.DataFrame(
     [
         {"項目": "Food", "kgCO2e": food_sum},
@@ -699,3 +756,5 @@ pie = (
     .properties(height=240)
 )
 st.altair_chart(pie, use_container_width=True)
+
+st.caption("圖表分類用英文（Food/Cooking/Drink/Transport）避免中文缺字。")

@@ -57,10 +57,43 @@ def get_sheet():
     sh = gc.open_by_key(st.secrets["google_sheet"]["spreadsheet_id"])
     return sh.worksheet(st.secrets["google_sheet"]["worksheet_name"])
 
-def get_round(student):
-    ws = get_sheet()
-    data = ws.get_all_records()
-    return sum(1 for r in data if r.get("student_name")==student) + 1
+def get_round(student_name: str) -> int:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    import streamlit as st
+
+    sa_info = dict(st.secrets["gcp_service_account"])
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
+    gc = gspread.authorize(creds)
+
+    sheet_id = st.secrets["google_sheet"]["spreadsheet_id"]
+    ws_name = st.secrets["google_sheet"]["worksheet_name"]
+
+    sh = gc.open_by_key(sheet_id)
+    ws = sh.worksheet(ws_name)
+
+    values = ws.get_all_values()
+
+    # 👉 如果整張表是空的
+    if len(values) <= 1:
+        return 1
+
+    header = values[0]
+    rows = values[1:]
+
+    # 👉 找 student_name 欄位
+    if "student_name" not in header:
+        return 1
+
+    idx = header.index("student_name")
+
+    count = 0
+    for r in rows:
+        if len(r) > idx and r[idx] == student_name:
+            count += 1
+
+    return count + 1
 
 # ---------------- 讀取資料 ----------------
 @st.cache_data
@@ -185,3 +218,4 @@ if st.button("📤 寫入 Google Sheet"):
         ws.append_row(list(row.keys()))
     ws.append_row(list(row.values()))
     st.success("已寫入 Google Sheet")
+

@@ -1,157 +1,125 @@
-
-# tomato_egg_app_ALL_1_to_5_WITH_MAP.py
+# carbon_meal_app.py
+# Streamlit 教學版：一餐的碳足跡（主食→料理→飲料→甜點→運輸）
+# - 水煮 / 煎炸
+# - 走路（不計算）
+# - 延噸公里 tkm 計算 + 顯示公式
+# - 可讀取 Excel（gCO2e / kgCO2e 混用）
+# - 不會因欄位數不同而炸
 
 import streamlit as st
 import pandas as pd
-import random, math, requests
-from datetime import datetime
-import altair as alt
-import folium
-from streamlit_folium import st_folium
-import gspread
-from google.oauth2.service_account import Credentials
+import math
+import re
 
-st.set_page_config(page_title="一餐的碳足跡（地圖版）", layout="centered")
+st.set_page_config(page_title="一餐的碳足跡", layout="centered")
 
-# ---------------- 工具 ----------------
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dlon/2)**2
-    return 2 * R * math.asin(math.sqrt(a))
+st.title("🍽 一餐的碳足跡（教學版）")
 
-def parse_gco2e(v):
-    if pd.isna(v): return 0.0
-    s = str(v).lower()
-    num = float("".join(c for c in s if c.isdigit() or c=="."))
-    return num*1000 if "kg" in s else num
+# ---------- 工具 ----------
+def parse_cf_to_kg(v):
+    if pd.isna(v):
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v) if v < 50 else float(v) / 1000
+    s = str(v).lower().replace(" ", "")
+    m = re.search(r"([\d\.]+)(kg|g)?", s)
+    if not m:
+        return 0.0
+    num = float(m.group(1))
+    unit = m.group(2)
+    if unit == "g":
+        return num / 1000
+    return num
 
-def search_places(query, lat, lon, limit=5):
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {
-        "q": query,
-        "format": "json",
-        "limit": limit,
-        "lat": lat,
-        "lon": lon,
-    }
-    r = requests.get(url, params=params, headers={"User-Agent":"edu-app"})
-    return r.json()
-
-# ---------------- 資料 ----------------
+# ---------- 讀資料 ----------
 @st.cache_data
 def load_data():
     df = pd.read_excel("產品碳足跡3.xlsx")
-    df.columns = ["code","name","cf","unit","weight"]
-    df["cf_g"] = df["cf"].apply(parse_gco2e)
-    df["cf_kg"] = df["cf_g"]/1000
-    df["weight_kg"] = df["weight"].fillna(0)
+    df = df.iloc[:, :4]
+    df.columns = ["code", "name", "cf_raw", "unit"]
+    df["cf_kg"] = df["cf_raw"].apply(parse_cf_to_kg)
+
+    if "weight" not in df.columns:
+        df["weight"] = 0.0
+
     return df
 
 df = load_data()
 
-# ---------------- 學生 ----------------
-st.title("🍱 一餐的碳足跡（地圖版）")
-student = st.text_input("請輸入姓名")
-if "round" not in st.session_state:
-    st.session_state.round = 1
-
-# ---------------- 主食 ----------------
+# ---------- 主食 ----------
 st.header("① 主食")
-foods = df[df.code=="1"].sample(3, random_state=1)
-st.table(foods[["name","cf_kg"]])
-
-# ---------------- 料理 ----------------
-st.header("② 料理方式")
-cook_cf = 0
-for i,row in foods.iterrows():
-    method = st.radio(row["name"], ["水煮","煎炸"], key=f"cook{i}")
-    if method=="水煮":
-        cook_cf += df[df.code=="1-2"].sample(1).cf_kg.values[0]
-    else:
-        cook_cf += df[df.code=="1-1"].sample(1).cf_kg.values[0]
-
-# ---------------- 飲料 ----------------
-st.header("③ 飲料")
-drink_cf = 0
-if st.checkbox("我要飲料"):
-    d = df[df.code=="2"].sample(1)
-    st.write(d.name.values[0])
-    drink_cf = d.cf_kg.values[0]
-
-# ---------------- 甜點 ----------------
-st.header("④ 甜點（選 2）")
-dessert_pool = df[df.code=="3"].sample(5)
-dessert_sel = st.multiselect("選兩種", dessert_pool.name.tolist())
-dessert_cf = dessert_pool[dessert_pool.name.isin(dessert_sel)].cf_kg.sum()
-
-# ---------------- 地圖＋運輸 ----------------
-st.header("⑤ 運輸（地圖點選分店）")
-
-mode = st.radio("方式",["走路","自己去買(pkm)","貨車配送(tkm)"])
-transport_cf = 0
-
-if mode!="走路":
-    st.subheader("設定起點")
-    lat = st.number_input("起點緯度", value=24.1477)
-    lon = st.number_input("起點經度", value=120.6736)
-
-    q = st.text_input("搜尋分店", value="全聯")
-    places = search_places(q, lat, lon, 5)
-
-    if places:
-        m = folium.Map(location=[lat,lon], zoom_start=14)
-        folium.Marker([lat,lon], tooltip="起點", icon=folium.Icon(color="blue")).add_to(m)
-
-        for i,p in enumerate(places):
-            folium.Marker(
-                [float(p["lat"]), float(p["lon"])],
-                tooltip=f"{i+1}. {p['display_name']}"
-            ).add_to(m)
-
-        state = st_folium(m, height=350)
-
-        idx = st.number_input("選擇分店編號", min_value=1, max_value=len(places), value=1)
-        dest = places[int(idx)-1]
-
-        dist = haversine(lat, lon, float(dest["lat"]), float(dest["lon"]))
-
-        if mode=="自己去買(pkm)":
-            ef = st.number_input("pkm 係數", value=0.115)
-            transport_cf = dist * ef
-            st.info(f"{dist:.2f} × {ef} = {transport_cf:.3f} kgCO₂e")
-        else:
-            total_weight_ton = foods.weight_kg.sum()/1000
-            ef = 2.71
-            transport_cf = dist * total_weight_ton * ef
-            st.info(f"{dist:.2f} × {total_weight_ton:.4f} × {ef} = {transport_cf:.3f} kgCO₂e")
-
-# ---------------- 總計 ----------------
-total = foods.cf_kg.sum()+cook_cf+drink_cf+dessert_cf+transport_cf
-st.subheader(f"🌍 總碳足跡：{total:.3f} kgCO₂e")
-
-# ---------------- 圖表 ----------------
-chart_df = pd.DataFrame({
-    "類別":["主食","料理","飲料","甜點","運輸"],
-    "kgCO2e":[foods.cf_kg.sum(),cook_cf,drink_cf,dessert_cf,transport_cf]
-})
-chart_df = chart_df[chart_df.kgCO2e>0]
-
-st.altair_chart(
-    alt.Chart(chart_df).mark_arc().encode(theta="kgCO2e", color="類別"),
-    use_container_width=True
+foods = df[df["code"] == "1"]
+selected_foods = st.multiselect(
+    "選擇主食（可多選）",
+    foods["name"].tolist(),
 )
 
-# ---------------- Google Sheet ----------------
-if st.button("送出給老師"):
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+food_df = foods[foods["name"].isin(selected_foods)]
+food_cf = food_df["cf_kg"].sum()
+food_weight = food_df["weight"].sum() / 1000  # g → ton
+
+# ---------- 料理 ----------
+st.header("② 料理方式（水煮 / 煎炸）")
+cook_cf = 0.0
+for _, row in food_df.iterrows():
+    method = st.radio(
+        f"{row['name']} 的料理方式",
+        ["水煮", "煎炸"],
+        horizontal=True,
+        key=row["name"]
     )
-    gc = gspread.authorize(creds)
-    sh = gc.open(st.secrets["google_sheet"]["spreadsheet_name"])
-    ws = sh.sheet1
-    ws.append_row([datetime.now().isoformat(), student, st.session_state.round, total])
-    st.session_state.round += 1
-    st.success("已送出")
+    if method == "煎炸":
+        cook_cf += 0.02  # 教學示意用
+
+# ---------- 飲料 ----------
+st.header("③ 飲料")
+drink = st.radio("是否喝飲料", ["不喝", "喝"], horizontal=True)
+drink_cf = 0.1 if drink == "喝" else 0.0
+
+# ---------- 甜點 ----------
+st.header("④ 甜點（最多 2 種）")
+desserts = df[df["code"] == "3"]
+dessert_sel = st.multiselect(
+    "選擇甜點",
+    desserts["name"].tolist(),
+    max_selections=2
+)
+dessert_cf = desserts[desserts["name"].isin(dessert_sel)]["cf_kg"].sum()
+
+# ---------- 運輸 ----------
+st.header("⑤ 運輸（延噸公里）")
+mode = st.radio("交通方式", ["走路", "貨車"], horizontal=True)
+
+transport_cf = 0.0
+formula_text = ""
+
+if mode == "貨車":
+    distance = st.number_input("距離 (km)", min_value=0.0, value=12.0)
+    tkm_factor = st.number_input("tkm 係數 (kgCO₂e / tkm)", value=2.71)
+    transport_cf = distance * food_weight * tkm_factor
+    formula_text = f"""
+    **碳足跡公式：**  
+    距離 × 貨物重量(噸) × tkm係數  
+    `{distance} × {food_weight:.4f} × {tkm_factor} = {transport_cf:.3f} kgCO₂e`
+    """
+else:
+    st.info("走路 → 不計算碳足跡")
+
+# ---------- 總結 ----------
+total = food_cf + cook_cf + drink_cf + dessert_cf + transport_cf
+
+st.markdown("---")
+st.subheader("✅ 總碳足跡")
+
+st.markdown(f"""
+- 主食：{food_cf:.3f} kgCO₂e  
+- 料理：{cook_cf:.3f} kgCO₂e  
+- 飲料：{drink_cf:.3f} kgCO₂e  
+- 甜點：{dessert_cf:.3f} kgCO₂e  
+- 運輸：{transport_cf:.3f} kgCO₂e  
+
+### 🌍 **總計：{total:.3f} kgCO₂e**
+""")
+
+if formula_text:
+    st.markdown(formula_text)

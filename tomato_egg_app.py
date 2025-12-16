@@ -24,11 +24,8 @@ st.set_page_config(
     layout="centered",
 )
 
-# 初始化 stage 屬性
-st.session_state.setdefault("stage", 1)
-
 # 你 repo 內的預設 Excel 檔名（在 repo 根目錄）
-EXCEL_PATH_DEFAULT = "產品碳足跡4.xlsx"
+EXCEL_PATH_DEFAULT = "碳足跡4.xlsx"
 
 # 報到名單（你可自行加）
 VALID_IDS = {
@@ -90,73 +87,33 @@ def parse_cf_to_g(value) -> float:
 # =========================
 if st.session_state.stage == 1:
     st.subheader("🍛 第一階段：主餐與採買")
-# 檢查 meal_df 是否有效
-if 'meal_items' in st.session_state and not st.session_state.meal_items.empty:
-    meal_df = st.session_state.meal_items.reset_index(drop=True)
-    
-    # 確保 meal_df 不是空的
-    if meal_df.empty:
-        st.error("meal_df 是空的，請確認資料加載流程。")
-    else:
-        for i in range(len(meal_df)):
-            item_name = meal_df.loc[i, "product_name"]
-            item_cf_kg = float(meal_df.loc[i, "cf_kgco2e"])
-            st.markdown(f"**第 {i+1} 道：{item_name}**（食材 {item_cf_kg:.3f} kgCO₂e）")
-            options = ["水煮", "煎炸"]
-            current_method = st.session_state.cook_method.get(i, "水煮")
-            chosen = st.radio(
-                " ",
-                options,
-                index=0 if current_method == "水煮" else 1,
-                horizontal=True,
-                key=f"cook_choice_{i}",
-                label_visibility="collapsed",
-            )
-
-            new_method = "水煮" if chosen.startswith("水煮") else "煎炸"
-            st.session_state.cook_method[i] = new_method
-else:
-    st.error("meal_items 尚未初始化或為空，請先加載資料。")
 
     # 檢查 'meal_items' 是否已初始化
-    if 'meal_items' not in st.session_state or st.session_state.meal_items.empty:
-        st.error("meal_items 尚未初始化或為空，請檢查數據加載流程。")
-    else:
+    if 'meal_items' in st.session_state and st.session_state.meal_items is not None:
         meal_df = st.session_state.meal_items.reset_index(drop=True)
-        st.write("meal_df 列名：", meal_df.columns)
 
-        # 確保所需的列存在
-        required_columns = ["product_name", "cf_gco2e", "declared_unit"]
-        missing_columns = [col for col in required_columns if col not in meal_df.columns]
+        if not meal_df.empty:  # 如果 meal_df 不是空的，才進行後續操作
+            for i in range(len(meal_df)):
+                item_name = meal_df.loc[i, "product_name"]
+                item_cf_kg = float(meal_df.loc[i, "cf_kgco2e"])
+                st.markdown(f"**第 {i+1} 道：{item_name}**（食材 {item_cf_kg:.3f} kgCO₂e）")
+                options = ["水煮", "煎炸"]
+                current_method = st.session_state.cook_method.get(i, "水煮")
+                chosen = st.radio(
+                    " ",
+                    options,
+                    index=0 if current_method == "水煮" else 1,
+                    horizontal=True,
+                    key=f"cook_choice_{i}",
+                    label_visibility="collapsed",
+                )
 
-        if missing_columns:
-            st.error(f"缺少以下必要的列：{', '.join(missing_columns)}")
+                new_method = "水煮" if chosen.startswith("水煮") else "煎炸"
+                st.session_state.cook_method[i] = new_method
         else:
-            # 進行列選擇
-            food_table = meal_df[["product_name", "cf_gco2e", "declared_unit"]].copy()
-            food_table.columns = ["食材名稱", "食材碳足跡(gCO₂e)", "宣告單位"]
-            food_table["食材碳足跡(gCO₂e)"] = food_table["食材碳足跡(gCO₂e)"].astype(float).round(1)
-            st.dataframe(food_table)
-
-    # 料理方式
-    st.markdown("### 🍳 料理方式（每道餐選一次）")
-    for i in range(len(meal_df)):
-        item_name = meal_df.loc[i, "product_name"]
-        item_cf_kg = float(meal_df.loc[i, "cf_kgco2e"])
-        st.markdown(f"**第 {i+1} 道：{item_name}**（食材 {item_cf_kg:.3f} kgCO₂e）")
-        options = ["水煮", "煎炸"]
-        current_method = st.session_state.cook_method.get(i, "水煮")
-        chosen = st.radio(
-            " ",
-            options,
-            index=0 if current_method == "水煮" else 1,
-            horizontal=True,
-            key=f"cook_choice_{i}",
-            label_visibility="collapsed",
-        )
-
-        new_method = "水煮" if chosen.startswith("水煮") else "煎炸"
-        st.session_state.cook_method[i] = new_method
+            st.error("meal_items 已經加載，但資料是空的。")
+    else:
+        st.error("meal_items 尚未初始化或為空，請先加載資料。")
 
     # 飲料
     st.markdown("### 🥤 飲料（可選）")
@@ -233,6 +190,3 @@ else:
         )
     )
     st.altair_chart(pie + labels, use_container_width=True)
-
-
-

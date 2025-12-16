@@ -1,3 +1,4 @@
+
 import re
 import random
 import math
@@ -55,7 +56,7 @@ def parse_cf_to_g(value) -> float:
     s = str(value).strip().lower()
     s = s.replace(" ", "")
     s = s.replace("kgco2e", "kg").replace("gco2e", "g")
-    
+
     if re.fullmatch(r"[-+]?\d*\.?\d+k", s):
         kg = float(s[:-1])
         return kg * 1000.0
@@ -154,7 +155,7 @@ if st.session_state.stage == 1:
         drink_cf = float(dp["cf_kgco2e"])
         drink_name = dp["product_name"]
         st.info(f"本次飲料：**{drink_name}**（{drink_cf:.3f} kgCO₂e）")
-    
+
     # 交通
     st.markdown("### 🧭 採買交通（以你的定位/你設定的起點為中心）")
     origin_lat = st.session_state.origin["lat"]
@@ -173,7 +174,7 @@ if st.session_state.stage == 1:
     # 地圖和分店選擇
     st.markdown("#### 🗺️ 地圖（點橘色分店 marker 做決策）")
     map_state = st_folium(m, height=320, use_container_width=True, key="store_map")
-    
+
     # 圓餅圖與長條圖
     chart_data = pd.DataFrame([
         {"cat": "Food", "kgCO2e": food_sum},

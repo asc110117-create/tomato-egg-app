@@ -1,144 +1,162 @@
+
+# tomato_egg_app_STEP_D_WITH_OIL_WATER_AND_DRINK.py
+import random
 import pandas as pd
 import streamlit as st
-import random
-import folium
-from streamlit_folium import st_folium
 from io import BytesIO
-import math
-import csv
-import io
 
-# =========================
-# Functions
-# =========================
+st.set_page_config(page_title="一餐的碳足跡大冒險", layout="centered")
 
-def load_data_from_excel(file_bytes: bytes) -> pd.DataFrame:
-    df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
-    df.columns = ["code", "product_name", "carbon_footprint"]
-    df["carbon_footprint"] = pd.to_numeric(df["carbon_footprint"], errors='coerce').fillna(0.0)
-    return df
+st.title("🍽️ 一餐的碳足跡大冒險")
 
-def haversine_km(lat1, lon1, lat2, lon2):
-    R = 6371.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlmb = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlmb / 2) ** 2
-    return 2 * R * math.asin(math.sqrt(a))
+# -----------------------------
+# Helpers
+# -----------------------------
+def require_cols(df):
+    cols = ["族群", "產品名稱", "碳足跡(kg)"]
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        st.error(f"Excel 缺少必要欄位：{missing}")
+        st.stop()
+    return df[cols].copy()
 
-# =========================
-# Streamlit Setup
-# =========================
+def label_with_cf(row):
+    return f"{row['產品名稱']} ({row['碳足跡(kg)']:.3f} kgCO₂e)"
 
-st.set_page_config(page_title="碳足跡計算", page_icon="🌍")
+# -----------------------------
+# Upload Excel
+# -----------------------------
+up = st.file_uploader("請上傳《產品碳足跡4.xlsx》", type=["xlsx"])
+if up is None:
+    st.stop()
 
-st.title("一餐的碳足跡大冒險：從農場到你的胃")
-st.write("計算您的碳足跡！")
+df = pd.read_excel(BytesIO(up.getvalue()))
+df = require_cols(df)
+df["碳足跡(kg)"] = pd.to_numeric(df["碳足跡(kg)"], errors="coerce").fillna(0.0)
 
-# File uploader for the Excel file with the data
-uploaded_file = st.file_uploader("請上傳碳足跡的 Excel 檔案", type="xlsx")
-if uploaded_file:
-    df = load_data_from_excel(uploaded_file)
-    st.write("數據已成功加載：")
-    st.dataframe(df)
+# Split groups
+g1 = df[df["族群"] == 1].reset_index(drop=True)      # 主食
+g11 = df[df["族群"] == "1-1"].reset_index(drop=True) # 油品
+g12 = df[df["族群"] == "1-2"].reset_index(drop=True) # 礦泉水
+g2 = df[df["族群"] == 2].reset_index(drop=True)      # 飲料
 
-# Select dishes
-selected_dishes = st.multiselect("選擇食材", options=df["product_name"].tolist())
-if selected_dishes:
-    st.write(f"您選擇了 {len(selected_dishes)} 種食材。")
-else:
-    st.warning("請選擇至少一種食材。")
+if len(g1) == 0:
+    st.error("找不到 主食（族群=1）")
+    st.stop()
 
-# Cooking method selection
-cooking_method = st.radio("選擇烹飪方式", ("水煮", "油炸"))
+# -----------------------------
+# Session
+# -----------------------------
+st.session_state.setdefault("pool", None)
+st.session_state.setdefault("picked", [])
+st.session_state.setdefault("cook_choice", {})  # idx -> '水煮'/'油炸'
+st.session_state.setdefault("cook_item", {})    # idx -> row
+st.session_state.setdefault("drink", None)
 
-# =========================
-# Carbon Footprint Calculation
-# =========================
+# -----------------------------
+# Main Dish (Random 5 choose 2)
+# -----------------------------
+st.header("🍚 主食（隨機 5 選 2）")
 
-def calculate_carbon_footprint(dish, cooking_method):
-    selected_dish = df[df["product_name"] == dish].iloc[0]
-    footprint = selected_dish["carbon_footprint"]
-    
-    # Adjust for cooking method
-    if cooking_method == "油炸":
-        footprint *= 1.2  # Assuming oil increases the carbon footprint by 20%
-    
-    return footprint
+if st.button("🎲 重新抽 5 種主食"):
+    st.session_state.pool = g1.sample(n=min(5, len(g1)), replace=False).reset_index(drop=True)
+    st.session_state.picked = []
+    st.session_state.cook_choice = {}
+    st.session_state.cook_item = {}
 
+if st.session_state.pool is None:
+    st.session_state.pool = g1.sample(n=min(5, len(g1)), replace=False).reset_index(drop=True)
 
-# Calculate total carbon footprint for selected dishes
-total_carbon_footprint = 0.0
-for dish in selected_dishes:
-    total_carbon_footprint += calculate_carbon_footprint(dish, cooking_method)
+pool = st.session_state.pool
+options = pool.apply(label_with_cf, axis=1).tolist()
 
-st.write(f"總碳足跡：{total_carbon_footprint:.2f} kg CO₂e")
+picked_labels = st.multiselect("請選 2 種主食", options=options, max_selections=2)
+st.session_state.picked = picked_labels
 
-# =========================
-# Transport Selection
-# =========================
+picked_rows = []
+for lbl in picked_labels:
+    name = lbl.split(" (")[0]
+    picked_rows.append(pool[pool["產品名稱"] == name].iloc[0])
 
-transport_mode = st.selectbox("選擇交通方式", ("走路", "機車", "汽車", "貨車"))
+# -----------------------------
+# Cooking choice per dish
+# -----------------------------
+st.subheader("🍳 料理方式（每道）")
+cook_sum = 0.0
+food_sum = 0.0
 
-# Default distance between store and user (example: 5 km)
-distance = 5.0
-if transport_mode == "走路":
-    carbon_footprint = 0
-elif transport_mode == "機車":
-    carbon_footprint = distance * 0.0951  # Example value for motorcycle
-elif transport_mode == "汽車":
-    carbon_footprint = distance * 0.115  # Example value for car
-else:
-    carbon_footprint = distance * 2.71  # Example value for truck (per ton-km)
+for i, row in enumerate(picked_rows):
+    food_sum += float(row["碳足跡(kg)"])
+    c = st.radio(
+        f"{row['產品名稱']}（{row['碳足跡(kg)']:.3f} kgCO₂e）",
+        ["水煮（用礦泉水）", "油炸（用油品）"],
+        key=f"cook_{i}",
+        horizontal=True
+    )
+    st.session_state.cook_choice[i] = c
 
-st.write(f"交通碳足跡：{carbon_footprint:.2f} kg CO₂e")
+    if "水煮" in c:
+        if len(g12) == 0:
+            st.warning("沒有礦泉水（族群=1-2）")
+            continue
+        pick = g12.sample(1).iloc[0]
+    else:
+        if len(g11) == 0:
+            st.warning("沒有油品（族群=1-1）")
+            continue
+        pick = g11.sample(1).iloc[0]
 
-# =========================
-# Map Display (for selecting store)
-# =========================
+    st.session_state.cook_item[i] = pick
+    cook_sum += float(pick["碳足跡(kg)"])
+    st.caption(f"料理耗材：{pick['產品名稱']}（{pick['碳足跡(kg)']:.3f} kgCO₂e）")
 
-# Location input for user (e.g., from geolocation)
-user_lat, user_lon = 24.1477, 120.6736  # Example: Taichung, Taiwan
+# -----------------------------
+# Drink (group2)
+# -----------------------------
+st.header("🥤 飲料")
+drink_cf = 0.0
+drink_name = "不喝"
 
-# Show the map with nearby stores
-m = folium.Map(location=[user_lat, user_lon], zoom_start=12)
-folium.Marker([user_lat, user_lon], popup="您現在的位置", icon=folium.Icon(color="blue")).add_to(m)
+if len(g2) > 0:
+    drink_opts = ["不喝"] + g2.apply(label_with_cf, axis=1).tolist()
+    choice = st.selectbox("選擇飲料", drink_opts)
+    if choice != "不喝":
+        name = choice.split(" (")[0]
+        drow = g2[g2["產品名稱"] == name].iloc[0]
+        drink_cf = float(drow["碳足跡(kg)"])
+        drink_name = name
+        st.info(f"飲料：{drink_name}（{drink_cf:.3f} kgCO₂e）")
 
-# Example: nearby store (nearby stores logic can be improved with real data)
-stores = [{"name": "全聯中華路店", "lat": 24.1467, "lon": 120.6730}, {"name": "全聯大雅店", "lat": 24.1580, "lon": 120.6535}]
-for store in stores:
-    folium.Marker([store["lat"], store["lon"]], popup=store["name"], icon=folium.Icon(color="orange")).add_to(m)
+# -----------------------------
+# Summary
+# -----------------------------
+st.divider()
+total = food_sum + cook_sum + drink_cf
+st.subheader("✅ 本餐小結")
+st.write({
+    "主食合計(kgCO₂e)": round(food_sum, 3),
+    "料理合計(kgCO₂e)": round(cook_sum, 3),
+    "飲料(kgCO₂e)": round(drink_cf, 3),
+    "總計(kgCO₂e)": round(total, 3),
+})
 
-st_folium(m, width=700, height=500)
-
-# =========================
-# Download Results
-# =========================
-
-results = {
-    "selected_dishes": selected_dishes,
-    "cooking_method": cooking_method,
-    "total_carbon_footprint": total_carbon_footprint,
-    "transport_mode": transport_mode,
-    "transport_carbon_footprint": carbon_footprint
+# -----------------------------
+# Download CSV
+# -----------------------------
+row = {
+    "food_sum_kgCO2e": round(food_sum, 6),
+    "cooking_sum_kgCO2e": round(cook_sum, 6),
+    "drink_name": drink_name,
+    "drink_kgCO2e": round(drink_cf, 6),
+    "total_kgCO2e": round(total, 6),
 }
 
-# Prepare the data to download
-import io
-import csv
-
-def convert_df_to_csv(results):
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=results.keys())
-    writer.writeheader()
-    writer.writerow(results)
-    return output.getvalue()
-
-csv_data = convert_df_to_csv(results)
 st.download_button(
-    label="下載碳足跡結果 (CSV)",
-    data=csv_data,
-    file_name="carbon_footprint_results.csv",
-    mime="text/csv"
+    "⬇️ 下載本次結果 CSV",
+    data=pd.DataFrame([row]).to_csv(index=False).encode("utf-8-sig"),
+    file_name="meal_result.csv",
+    mime="text/csv",
+    use_container_width=True,
 )
 
+st.caption("※ 交通與地圖（全聯選分店）可直接接回你既有版本，不影響本檔。")

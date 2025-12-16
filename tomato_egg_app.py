@@ -17,11 +17,11 @@ def create_pie_chart(data, labels):
     if any(not is_valid_data(x) for x in data):
         st.error("數據包含無效值，無法繪製圓餅圖。")
         return
-
+    
     data = [float(x) for x in data]  # 確保所有數據都是 float 型態
     denom = sum(data) if sum(data) > 0 else 1  # 防止除以 0
     pct_labels = [f"{(x / denom) * 100:.1f}%" for x in data]  # 計算百分比標籤
-
+    
     pie = (
         alt.Chart(pd.DataFrame({'data': data, 'labels': labels}))
         .mark_arc()
@@ -32,7 +32,7 @@ def create_pie_chart(data, labels):
         )
         .properties(height=400)
     )
-
+    
     st.altair_chart(pie, use_container_width=True)
 
 # 渲染長條圖
@@ -41,13 +41,13 @@ def create_bar_chart(data, labels):
     if any(not is_valid_data(x) for x in data):
         st.error("數據包含無效值，無法繪製長條圖。")
         return
-
+    
     data = [float(x) for x in data]  # 確保所有數據都是 float 型態
     chart_data = pd.DataFrame({
         'category': labels,
         'value': data
     })
-
+    
     bar = (
         alt.Chart(chart_data)
         .mark_bar()
@@ -59,7 +59,7 @@ def create_bar_chart(data, labels):
         )
         .properties(height=400)
     )
-
+    
     st.altair_chart(bar, use_container_width=True)
 
 # 主程式邏輯
@@ -93,3 +93,22 @@ if st.button("⬇️ 下載結果 CSV"):
         file_name="carbon_footprint_result.csv",
         mime="text/csv"
     )
+
+# 進行碳足跡計算的過程，這裡是示範數據
+# 您可以將食材、料理、飲料的數據從 Excel 讀取或其他來源進行處理
+
+# 假設的總碳足跡數據 (來自食材、烹飪方式等的計算結果)
+food_sum = 2.5  # 主食碳足跡
+cook_sum = 1.2  # 料理碳足跡
+drink_cf = 0.3  # 飲料碳足跡
+
+# 顯示碳足跡計算的過程
+st.markdown("### ✅ 計算過程")
+st.write(f"主食碳足跡：{food_sum} kgCO₂e")
+st.write(f"料理碳足跡：{cook_sum} kgCO₂e")
+st.write(f"飲料碳足跡：{drink_cf} kgCO₂e")
+
+# 計算總碳足跡
+total_footprint = food_sum + cook_sum + drink_cf
+st.markdown(f"### ✅ 總碳足跡：{total_footprint:.3f} kgCO₂e")
+

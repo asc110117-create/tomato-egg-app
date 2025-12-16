@@ -21,6 +21,19 @@ from streamlit_folium import st_folium
 from streamlit_geolocation import streamlit_geolocation
 
 st.session_state.setdefault("stage", 1)
+# 確認 meal_df 是否有正確的列名
+st.write("meal_df 列名：", meal_df.columns)
+
+# 確保所需的列存在
+required_columns = ["product_name", "cf_gco2e", "declared_unit"]
+missing_columns = [col for col in required_columns if col not in meal_df.columns]
+
+if missing_columns:
+    st.error(f"缺少以下必要的列：{', '.join(missing_columns)}")
+else:
+    # 進行列選擇
+    food_table = meal_df[["product_name", "cf_gco2e", "declared_unit"]].copy()
+    st.dataframe(food_table)
 
 # =========================
 # 0) 基本設定
@@ -198,6 +211,7 @@ if st.session_state.stage == 1:
         )
     )
     st.altair_chart(pie + labels, use_container_width=True)
+
 
 
 

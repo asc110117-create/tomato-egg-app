@@ -125,18 +125,18 @@ if st.session_state.stage == 1:
 
     # 飲料
    # 檢查並初始化 drink_mode_state 屬性
-if 'drink_mode_state' not in st.session_state:
-    st.session_state.drink_mode_state = "隨機生成飲料"  # 設置為預設值
+    if 'drink_mode_state' not in st.session_state:
+        st.session_state.drink_mode_state = "隨機生成飲料"  # 設置為預設值
 
-# 飲料選項
-st.markdown("### 🥤 飲料（可選）")
-drink_mode = st.radio(
-    "飲料選項",
-    ["隨機生成飲料", "我不喝飲料"],
-    index=0 if st.session_state.drink_mode_state == "隨機生成飲料" else 1,
-    horizontal=True,
-    key="drink_mode_radio",
-)
+    # 飲料選項
+    st.markdown("### 🥤 飲料（可選）")
+    drink_mode = st.radio(
+        "飲料選項",
+        ["隨機生成飲料", "我不喝飲料"],
+        index=0 if st.session_state.drink_mode_state == "隨機生成飲料" else 1,
+        horizontal=True,
+        key="drink_mode_radio",
+    )
 
     if drink_mode == "隨機生成飲料":
         if st.button("🔄 換一杯飲料", use_container_width=True):
@@ -203,5 +203,6 @@ drink_mode = st.radio(
         )
     )
     st.altair_chart(pie + labels, use_container_width=True)
+
 
 

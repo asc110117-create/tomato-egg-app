@@ -23,6 +23,9 @@ st.set_page_config(
     layout="centered",
 )
 
+# 初始化 stage 屬性
+st.session_state.setdefault("stage", 1)
+
 # 你 repo 內的預設 Excel 檔名（在 repo 根目錄）
 EXCEL_PATH_DEFAULT = "產品碳足跡3.xlsx"
 

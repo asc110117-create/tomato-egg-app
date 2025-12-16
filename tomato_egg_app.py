@@ -15,6 +15,8 @@ from streamlit_folium import st_folium
 
 from streamlit_geolocation import streamlit_geolocation
 
+st.session_state.setdefault("stage", 1)
+
 # =========================
 # 0) 基本設定
 # =========================
@@ -191,3 +193,4 @@ if st.session_state.stage == 1:
         )
     )
     st.altair_chart(pie + labels, use_container_width=True)
+

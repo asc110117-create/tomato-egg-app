@@ -12,6 +12,14 @@ import altair as alt
 import requests
 import folium
 from streamlit_folium import st_folium
+# 檢查 session_state 是否有 'stage' 屬性
+if 'stage' not in st.session_state:
+    st.session_state.stage = 1  # 如果沒有 'stage'，則設為預設值 1
+
+if st.session_state.stage == 1:
+    # 第一階段的程式碼
+    st.subheader("🍛 第一階段：主餐與採買")
+    # 其他程式邏輯...
 
 from streamlit_geolocation import streamlit_geolocation
 
@@ -190,3 +198,4 @@ if st.session_state.stage == 1:
         )
     )
     st.altair_chart(pie + labels, use_container_width=True)
+

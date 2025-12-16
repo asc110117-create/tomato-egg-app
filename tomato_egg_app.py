@@ -12,7 +12,7 @@ import requests
 import folium
 from streamlit_folium import st_folium
 
-# geolocation：注意不要傳 key=...（你之前 TypeError 就是因為這個） 
+# geolocation：注意不要傳 key=...（你之前 TypeError 就是因為這個）
 from streamlit_geolocation import streamlit_geolocation
 
 
@@ -129,22 +129,26 @@ EF_MAP = {"機車": 0.0951, "汽車": 0.115, "貨車": 2.71}
 # =========================
 @st.cache_data(show_spinner=False)
 def load_data_from_excel(file_bytes: bytes) -> pd.DataFrame:
-    df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
-    if df.shape[1] < 4:
-        raise ValueError("Excel 欄位太少：至少 4 欄（編號、品名、碳足跡、宣告單位）。")
+    try:
+        df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
+        if df.shape[1] < 4:
+            raise ValueError("Excel 欄位太少：至少 4 欄（編號、品名、碳足跡、宣告單位）。")
 
-    df = df.iloc[:, :4].copy()
-    df.columns = ["code", "product_name", "product_carbon_footprint_data", "declared_unit"]
+        df = df.iloc[:, :4].copy()
+        df.columns = ["code", "product_name", "product_carbon_footprint_data", "declared_unit"]
 
-    df["code"] = df["code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    df["product_name"] = df["product_name"].astype(str).str.strip()
-    df["declared_unit"] = df["declared_unit"].astype(str).str.strip()
+        df["code"] = df["code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        df["product_name"] = df["product_name"].astype(str).str.strip()
+        df["declared_unit"] = df["declared_unit"].astype(str).str.strip()
 
-    df["cf_gco2e"] = df["product_carbon_footprint_data"].apply(parse_cf_to_g)
-    df = df.dropna(subset=["cf_gco2e"]).reset_index(drop=True)
+        df["cf_gco2e"] = df["product_carbon_footprint_data"].apply(parse_cf_to_g)
+        df = df.dropna(subset=["cf_gco2e"]).reset_index(drop=True)
 
-    df["cf_kgco2e"] = df["cf_gco2e"].apply(g_to_kg)
-    return df
+        df["cf_kgco2e"] = df["cf_gco2e"].apply(g_to_kg)
+        return df
+    except Exception as e:
+        st.error(f"讀取 Excel 檔案時出現錯誤：{str(e)}")
+        return pd.DataFrame()
 
 
 # =========================

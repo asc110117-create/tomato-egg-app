@@ -1,96 +1,209 @@
-# tomato_egg_app_v6_COLUMN_SAFE.py
-# 自動辨識欄位名稱（避免 KeyError: 'cf'）
 
-import streamlit as st
-import pandas as pd
+# tomato_egg_app_FINAL_ALL.py
+# 一餐的碳足跡大冒險（完整版）
+# Excel 欄位固定三欄：族群、產品名稱、碳足跡(kg)
+
+import math
 import random
+from datetime import datetime
+from io import BytesIO
 
-st.set_page_config(page_title="一餐的碳足跡大冒險", layout="centered")
+import pandas as pd
+import streamlit as st
+import altair as alt
+import folium
+from streamlit_folium import st_folium
+import requests
+
+# =========================
+# 基本設定
+# =========================
+st.set_page_config(page_title="一餐的碳足跡大冒險", page_icon="🍽️", layout="centered")
+
 st.title("🍽️ 一餐的碳足跡大冒險")
 
-# =======================
-# 1. 上傳 Excel
-# =======================
-uploaded = st.file_uploader("請上傳《碳足跡4.xlsx》", type=["xlsx"])
-if uploaded is None:
-    st.stop()
+EXCEL_NAME = "碳足跡4.xlsx"
 
-df = pd.read_excel(uploaded)
+# =========================
+# 載入資料（不在 cache 裡放 widget）
+# =========================
+def load_excel():
+    try:
+        return pd.read_excel(EXCEL_NAME)
+    except FileNotFoundError:
+        up = st.file_uploader("請上傳《碳足跡4.xlsx》", type=["xlsx"])
+        if up is None:
+            st.stop()
+        return pd.read_excel(up)
 
-# =======================
-# 2. 欄位安全處理
-# =======================
-# 嘗試常見欄位名稱對應
-col_map = {}
-for c in df.columns:
-    c_low = c.lower()
-    if c_low in ["group", "群組", "分類"]:
-        col_map[c] = "group"
-    elif c_low in ["name", "品名", "產品名稱"]:
-        col_map[c] = "name"
-    elif c_low in ["cf", "碳足跡", "carbon", "co2e"]:
-        col_map[c] = "cf"
+df = load_excel()
+df.columns = ["group", "name", "cf_kg"]
+df["cf_kg"] = df["cf_kg"].astype(float)
 
-df = df.rename(columns=col_map)
-
-required = {"group", "name", "cf"}
-if not required.issubset(df.columns):
-    st.error("Excel 欄位無法對應，請確認至少有：group / name / cf")
-    st.write("目前欄位：", list(df.columns))
-    st.stop()
-
-df["cf"] = pd.to_numeric(df["cf"], errors="coerce")
-df = df.dropna(subset=["cf"])
-
-# =======================
-# 3. 主食 5 選 2
-# =======================
-st.header("🍚 主食（隨機 5 選 2）")
-
-food_df = df[df["group"] == "1"]
+# 群組
+food_df = df[df["group"] == 1]
 water_df = df[df["group"] == "1-1"]
 oil_df = df[df["group"] == "1-2"]
+drink_df = df[df["group"] == 2]
+dessert_df = df[df["group"] == 3]
 
-if len(food_df) < 2:
-    st.error("group=1 的主食資料不足")
+# =========================
+# 使用者與測驗次數
+# =========================
+st.subheader("👤 使用者資訊")
+student = st.text_input("請輸入姓名")
+if not student:
     st.stop()
 
-food_pool = food_df.sample(n=min(5, len(food_df)), random_state=random.randint(1,9999))
+if "round" not in st.session_state:
+    st.session_state.round = 1
+else:
+    st.session_state.round += 0
 
-options = {
-    f'{r["name"]}（{r["cf"]:.3f} kgCO₂e）': r
-    for _, r in food_pool.iterrows()
+st.info(f"📘 這是 **第 {st.session_state.round} 次測試**")
+
+# =========================
+# 主食：5 選 2
+# =========================
+st.subheader("🍚 主食選擇（5 選 2）")
+
+if "food_pool" not in st.session_state:
+    st.session_state.food_pool = food_df.sample(n=min(5, len(food_df)))
+
+options = [
+    f"{r['name']}（{r['cf_kg']} kgCO₂e）"
+    for _, r in st.session_state.food_pool.iterrows()
+]
+
+chosen = st.multiselect("請選 2 種主食", options, max_selections=2)
+
+selected_foods = []
+food_cf = 0.0
+
+for opt in chosen:
+    name = opt.split("（")[0]
+    row = st.session_state.food_pool[st.session_state.food_pool["name"] == name].iloc[0]
+    food_cf += row["cf_kg"]
+
+    method = st.radio(
+        f"{name} 的料理方式",
+        ["水煮", "油炸"],
+        horizontal=True,
+        key=name
+    )
+
+    if method == "水煮":
+        pick = water_df.sample(1).iloc[0]
+    else:
+        pick = oil_df.sample(1).iloc[0]
+
+    st.caption(f"→ 使用 {pick['name']}（{pick['cf_kg']} kgCO₂e）")
+    food_cf += pick["cf_kg"]
+
+# =========================
+# 飲料
+# =========================
+st.subheader("🥤 飲料")
+
+drink_opt = st.selectbox(
+    "選擇飲料",
+    ["不喝飲料"] + [
+        f"{r['name']}（{r['cf_kg']} kgCO₂e）"
+        for _, r in drink_df.iterrows()
+    ]
+)
+
+drink_cf = 0.0
+if drink_opt != "不喝飲料":
+    drink_cf = float(drink_opt.split("（")[1].replace(" kgCO₂e）", ""))
+
+# =========================
+# 甜點
+# =========================
+st.subheader("🍰 甜點")
+
+dessert_opt = st.selectbox(
+    "選擇甜點",
+    ["不吃甜點"] + [
+        f"{r['name']}（{r['cf_kg']} kgCO₂e）"
+        for _, r in dessert_df.iterrows()
+    ]
+)
+
+dessert_cf = 0.0
+if dessert_opt != "不吃甜點":
+    dessert_cf = float(dessert_opt.split("（")[1].replace(" kgCO₂e）", ""))
+
+# =========================
+# 交通（地圖 + 延噸公里）
+# =========================
+st.subheader("🚚 交通（延噸公里）")
+
+transport = st.radio(
+    "交通方式",
+    ["走路（0 kgCO₂e）", "機車（kg/噸公里）", "貨車（kg/噸公里）"]
+)
+
+origin = [24.1477, 120.6736]
+m = folium.Map(location=origin, zoom_start=13)
+folium.Marker(origin, tooltip="起點").add_to(m)
+
+map_state = st_folium(m, height=300)
+
+distance_km = st.number_input("距離（km）", min_value=0.0, value=1.0)
+weight_ton = st.number_input("食材總重量（噸）", min_value=0.0, value=0.0008)
+
+tkm = 0.0
+if transport == "機車（kg/噸公里）":
+    tkm = 2.71
+elif transport == "貨車（kg/噸公里）":
+    tkm = 1.2
+
+transport_cf = distance_km * weight_ton * tkm
+
+st.code(f"碳足跡 = {distance_km} × {weight_ton} × {tkm} = {transport_cf:.3f} kgCO₂e")
+
+# =========================
+# 總計與圖表
+# =========================
+total = food_cf + drink_cf + dessert_cf + transport_cf
+
+st.subheader("📊 碳足跡總計")
+st.success(f"總碳足跡：{total:.3f} kgCO₂e")
+
+chart_df = pd.DataFrame([
+    {"項目": "主食+料理", "kgCO₂e": food_cf},
+    {"項目": "飲料", "kgCO₂e": drink_cf},
+    {"項目": "甜點", "kgCO₂e": dessert_cf},
+    {"項目": "交通", "kgCO₂e": transport_cf},
+])
+
+bar = alt.Chart(chart_df).mark_bar().encode(
+    x="項目",
+    y="kgCO₂e"
+)
+
+pie = alt.Chart(chart_df).mark_arc().encode(
+    theta="kgCO₂e",
+    color="項目"
+)
+
+st.altair_chart(bar, use_container_width=True)
+st.altair_chart(pie, use_container_width=True)
+
+# =========================
+# 匯出 CSV
+# =========================
+row = {
+    "student": student,
+    "round": st.session_state.round,
+    "food_cf": food_cf,
+    "drink_cf": drink_cf,
+    "dessert_cf": dessert_cf,
+    "transport_cf": transport_cf,
+    "total_cf": total,
+    "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 }
 
-selected = st.multiselect("請選 2 種主食", list(options.keys()), max_selections=2)
-
-total = 0.0
-
-if len(selected) == 2:
-    st.subheader("🍳 料理方式")
-    for key in selected:
-        r = options[key]
-        st.markdown(f"### {r['name']}（{r['cf']:.3f} kgCO₂e）")
-        total += r["cf"]
-
-        method = st.radio("料理方式", ["水煮", "油炸"], key=r["name"])
-        if method == "水煮" and not water_df.empty:
-            w = water_df.sample(1).iloc[0]
-            st.caption(f"礦泉水：{w['name']}（{w['cf']:.3f} kgCO₂e）")
-            total += w["cf"]
-        if method == "油炸" and not oil_df.empty:
-            o = oil_df.sample(1).iloc[0]
-            st.caption(f"油品：{o['name']}（{o['cf']:.3f} kgCO₂e）")
-            total += o["cf"]
-
-    st.success(f"✅ 主食階段總碳足跡：{total:.3f} kgCO₂e")
-
-    st.download_button(
-        "⬇️ 下載 CSV",
-        data=pd.DataFrame([{
-            "foods": ", ".join([options[k]["name"] for k in selected]),
-            "total_kgco2e": total
-        }]).to_csv(index=False, encoding="utf-8-sig"),
-        file_name="result.csv",
-        mime="text/csv"
-    )
+csv = pd.DataFrame([row]).to_csv(index=False).encode("utf-8-sig")
+st.download_button("⬇️ 下載 CSV", csv, "carbon_result.csv", "text/csv")

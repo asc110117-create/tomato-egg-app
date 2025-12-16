@@ -23,11 +23,11 @@ def create_pie_chart(data, labels):
     if any(not is_valid_data(x) for x in data):
         st.error("數據包含無效值，無法繪製圓餅圖。")
         return
-    
+
     data = [float(x) for x in data]  # 確保所有數據都是 float 型態
     denom = sum(data) if sum(data) > 0 else 1  # 防止除以 0
     pct_labels = [f"{(x / denom) * 100:.1f}%" for x in data]  # 計算百分比標籤
-    
+
     pie = (
         alt.Chart(pd.DataFrame({'data': data, 'labels': labels}))
         .mark_arc()
@@ -38,7 +38,7 @@ def create_pie_chart(data, labels):
         )
         .properties(height=400)
     )
-    
+
     st.altair_chart(pie, use_container_width=True)
 
 # 渲染長條圖
@@ -46,13 +46,13 @@ def create_bar_chart(data, labels):
     if any(not is_valid_data(x) for x in data):
         st.error("數據包含無效值，無法繪製長條圖。")
         return
-    
+
     data = [float(x) for x in data]  # 確保所有數據都是 float 型態
     chart_data = pd.DataFrame({
         'category': labels,
         'value': data
     })
-    
+
     bar = (
         alt.Chart(chart_data)
         .mark_bar()
@@ -64,7 +64,7 @@ def create_bar_chart(data, labels):
         )
         .properties(height=400)
     )
-    
+
     st.altair_chart(bar, use_container_width=True)
 
 # 食材抽取

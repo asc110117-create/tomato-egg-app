@@ -64,9 +64,9 @@ def label_with_cf(row):
 def create_pie_chart(data, labels):
 
     # 檢查數據是否為有效數字
-food_sum = float(food_sum) if isinstance(food_sum, (int, float)) else 0.0
-cook_sum = float(cook_sum) if isinstance(cook_sum, (int, float)) else 0.0
-drink_cf = float(drink_cf) if isinstance(drink_cf, (int, float)) else 0.0
+    food_sum = float(food_sum) if isinstance(food_sum, (int, float)) else 0.0
+    cook_sum = float(cook_sum) if isinstance(cook_sum, (int, float)) else 0.0
+    drink_cf = float(drink_cf) if isinstance(drink_cf, (int, float)) else 0.0
 
 # 調用圓餅圖
 create_pie_chart([food_sum, cook_sum, drink_cf], ["主食", "料理", "飲料"])
@@ -289,6 +289,7 @@ if st.button("📤 送出並寫入 Google Sheet（全班彙整）", use_containe
     except Exception as e:
         st.error("寫入失敗：請檢查 ①服務帳戶是否已被共用為「編輯者」 ② spreadsheet_id / worksheet_name 是否正確 ③ Sheets API 是否已啟用。")
         st.exception(e)
+
 
 
 

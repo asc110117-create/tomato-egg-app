@@ -1,4 +1,3 @@
-
 import random
 import pandas as pd
 import streamlit as st
@@ -6,7 +5,6 @@ from io import BytesIO
 import matplotlib.pyplot as plt
 import seaborn as sns
 from googleapiclient.discovery import build
-from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 
 # Streamlit 設置
@@ -49,12 +47,13 @@ def append_result_to_google_sheet(row):
     )
     service = build("sheets", "v4", credentials=credentials)
     sheet_id = st.secrets["google_sheet_id"]
-    range_name = "Sheet1!A1"
+    range_name = "工作表1!A1"
     values = [[
         row['timestamp'],
         row['student_name'],
         row['visitor_id'],
         row['device_id'],
+        row['test_number'],
         row['total_kgco2e'],
         row['food_kgco2e'],
         row['cooking_kgco2e'],
@@ -70,6 +69,18 @@ def append_result_to_google_sheet(row):
         valueInputOption="RAW",
         body=body
     ).execute()
+
+# -----------------------------
+# Input Name and Calculate Test Number
+# -----------------------------
+if "test_number" not in st.session_state:
+    st.session_state.test_number = 1  # Initialize test number if not already set
+
+# Input student name and increment test number
+student_name = st.text_input("請輸入姓名")
+if student_name:
+    st.session_state.student_name = student_name
+    st.session_state.test_number += 1  # Increment test number for each new test
 
 # -----------------------------
 # Upload Excel
@@ -206,6 +217,7 @@ row = {
     "drink_name": drink_name,
     "drink_kgCO2e": round(drink_cf, 6),
     "total_kgCO2e": round(total, 6),
+    "test_number": st.session_state.test_number,
 }
 
 st.download_button(

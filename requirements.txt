@@ -8,3 +8,4 @@ streamlit-folium
 streamlit-geolocation
 gspread
 google-auth
+seaborn

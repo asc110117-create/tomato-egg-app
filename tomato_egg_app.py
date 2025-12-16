@@ -220,13 +220,17 @@ def pick_one(df: pd.DataFrame, code_value: str) -> dict:
 # =========================
 # 6) 取得定位（只抓一次）
 # =========================
-# 初始化 origin
-if "origin" not in st.session_state:
-    st.session_state.origin = {"lat": None, "lng": None}
+# 確保 geo 被初始化
+if "geo" not in st.session_state:
+    st.session_state.geo = None
 
-# 取得定位資料
+# 若 geo 為 None，則呼叫 geolocation
 if st.session_state.geo is None:
     st.session_state.geo = streamlit_geolocation()  # 不要傳 key=...
+
+# 確保 origin 被初始化
+if "origin" not in st.session_state:
+    st.session_state.origin = {"lat": None, "lng": None}
 
 geo = st.session_state.geo or {}
 geo_lat = geo.get("latitude")
@@ -234,7 +238,7 @@ geo_lng = geo.get("longitude")
 geo_lat = float(geo_lat) if geo_lat is not None else None
 geo_lng = float(geo_lng) if geo_lng is not None else None
 
-# 當 origin 尚未設置並且已經取得定位資料時，設置 origin
+# 如果 origin 尚未設置並且已經取得定位資料，則設置 origin
 if st.session_state.origin["lat"] is None and geo_lat is not None and geo_lng is not None:
     st.session_state.origin = {"lat": geo_lat, "lng": geo_lng}
 
@@ -258,6 +262,7 @@ df_packaging = df_all[df_all["code"].isin(["4-1","4-2","4-3","4-4","4-5","4-6"])
 # 11) 第一階段：主餐/料理/飲料/交通（可收起）
 # =========================
 # 略過較長部分，請將主餐碳足跡加總並顯示交通
+
 
 
 

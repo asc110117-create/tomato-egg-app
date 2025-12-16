@@ -1,14 +1,3 @@
-import streamlit as st
-
-# 測試讀取密鑰
-try:
-    google_service_account = st.secrets["google_service_account"]
-    st.write("Google Service Account Loaded Successfully!")
-    st.write(google_service_account)  # 顯示服務帳戶資料
-except KeyError as e:
-    st.error(f"KeyError: {str(e)}")  # 如果密鑰缺失，顯示錯誤訊息
-
-
 
 import random
 import pandas as pd
@@ -250,6 +239,7 @@ if st.button("📤 送出並寫入 Google Sheet（全班彙整）", use_containe
     except Exception as e:
         st.error("寫入失敗：請檢查 ①服務帳戶是否已被共用為「編輯者」 ② spreadsheet_id / worksheet_name 是否正確 ③ Sheets API 是否已啟用。")
         st.exception(e)
+
 
 
 

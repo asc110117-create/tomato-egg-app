@@ -9,3 +9,4 @@ streamlit-geolocation
 gspread
 google-auth
 seaborn
+google-api-python-client

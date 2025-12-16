@@ -1,4 +1,3 @@
-
 import random
 import pandas as pd
 import streamlit as st
@@ -90,15 +89,13 @@ def read_excel_source() -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def load_data_from_excel(file_bytes: bytes) -> pd.DataFrame:
     df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
-    if df.shape[1] < 4:
-        raise ValueError("Excel 欄位太少：至少 4 欄（編號、品名、碳足跡、宣告單位）。")
+    if df.shape[1] < 3:
+        raise ValueError("Excel 欄位太少：至少 3 欄（族群、產品名稱、碳足跡(kg)）。")
 
-    df = df.iloc[:, :4].copy()
-    df.columns = ["code", "product_name", "product_carbon_footprint_data", "declared_unit"]
+    df.columns = ["code", "product_name", "product_carbon_footprint_data"]
 
-    df["code"] = df["code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    df["code"] = df["code"].astype(str).str.strip()
     df["product_name"] = df["product_name"].astype(str).str.strip()
-    df["declared_unit"] = df["declared_unit"].astype(str).str.strip()
 
     df["cf_gco2e"] = df["product_carbon_footprint_data"].apply(parse_cf_to_g)
     df = df.dropna(subset=["cf_gco2e"]).reset_index(drop=True)
@@ -205,3 +202,11 @@ if st.button("⬇️ 下載結果 CSV"):
         file_name="carbon_footprint_result.csv",
         mime="text/csv"
     )
+"""
+
+# Write the complete script to a file
+file_path = "/mnt/data/tomato_egg_app_combined_with_transport_final.py"
+with open(file_path, "w", encoding="utf-8") as file:
+    file.write(fixed_code)
+
+file_path  # Return the file path for downloading

@@ -28,7 +28,7 @@ st.set_page_config(
 st.session_state.setdefault("stage", 1)
 
 # 你 repo 內的預設 Excel 檔名（在 repo 根目錄）
-EXCEL_PATH_DEFAULT = "產品碳足跡3.xlsx"
+EXCEL_PATH_DEFAULT = "產品碳足跡4.xlsx"
 
 # 報到名單（你可自行加）
 VALID_IDS = {
@@ -233,5 +233,6 @@ else:
         )
     )
     st.altair_chart(pie + labels, use_container_width=True)
+
 
 

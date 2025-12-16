@@ -50,7 +50,7 @@ if not up:
 
 df = pd.read_excel(BytesIO(up.getvalue()))
 df.columns = [c.strip() for c in df.columns]
-required = ["族群","產品名稱","碳足跡(kg)","重量(g)"]
+required = ["族群","產品名稱","碳足跡(kg)"]
 for c in required:
     if c not in df.columns:
         st.error(f"缺少欄位：{c}")
@@ -181,3 +181,4 @@ row = dict(
 )
 csv = pd.DataFrame([row]).to_csv(index=False).encode("utf-8-sig")
 st.download_button("⬇️ 下載 CSV", csv, "result.csv", "text/csv")
+

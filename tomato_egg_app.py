@@ -1,4 +1,3 @@
-
 import re
 import random
 import math
@@ -8,32 +7,12 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-if 'meal_items' not in st.session_state:
-    st.session_state.meal_items = pd.DataFrame()  # 初始化為空的 DataFrame
-
-
-
 import altair as alt
 import requests
 import folium
 from streamlit_folium import st_folium
 
 from streamlit_geolocation import streamlit_geolocation
-
-st.session_state.setdefault("stage", 1)
-# 確認 meal_df 是否有正確的列名
-st.write("meal_df 列名：", meal_df.columns)
-
-# 確保所需的列存在
-required_columns = ["product_name", "cf_gco2e", "declared_unit"]
-missing_columns = [col for col in required_columns if col not in meal_df.columns]
-
-if missing_columns:
-    st.error(f"缺少以下必要的列：{', '.join(missing_columns)}")
-else:
-    # 進行列選擇
-    food_table = meal_df[["product_name", "cf_gco2e", "declared_unit"]].copy()
-    st.dataframe(food_table)
 
 # =========================
 # 0) 基本設定
@@ -73,7 +52,7 @@ def parse_cf_to_g(value) -> float:
     s = str(value).strip().lower()
     s = s.replace(" ", "")
     s = s.replace("kgco2e", "kg").replace("gco2e", "g")
-
+    
     if re.fullmatch(r"[-+]?\d*\.?\d+k", s):
         kg = float(s[:-1])
         return kg * 1000.0
@@ -108,13 +87,25 @@ def parse_cf_to_g(value) -> float:
 if st.session_state.stage == 1:
     st.subheader("🍛 第一階段：主餐與採買")
 
-    # 主餐表格顯示
-    st.markdown("### 主餐（3 項）")
-    meal_df = st.session_state.meal_items.reset_index(drop=True)
-    food_table = meal_df[["product_name", "cf_gco2e", "declared_unit"]].copy()
-    food_table.columns = ["食材名稱", "食材碳足跡(gCO₂e)", "宣告單位"]
-    food_table["食材碳足跡(gCO₂e)"] = food_table["食材碳足跡(gCO₂e)"].astype(float).round(1)
-    st.dataframe(food_table)
+    # 檢查 'meal_items' 是否已初始化
+    if 'meal_items' not in st.session_state or st.session_state.meal_items.empty:
+        st.error("meal_items 尚未初始化或為空，請檢查數據加載流程。")
+    else:
+        meal_df = st.session_state.meal_items.reset_index(drop=True)
+        st.write("meal_df 列名：", meal_df.columns)
+
+        # 確保所需的列存在
+        required_columns = ["product_name", "cf_gco2e", "declared_unit"]
+        missing_columns = [col for col in required_columns if col not in meal_df.columns]
+
+        if missing_columns:
+            st.error(f"缺少以下必要的列：{', '.join(missing_columns)}")
+        else:
+            # 進行列選擇
+            food_table = meal_df[["product_name", "cf_gco2e", "declared_unit"]].copy()
+            food_table.columns = ["食材名稱", "食材碳足跡(gCO₂e)", "宣告單位"]
+            food_table["食材碳足跡(gCO₂e)"] = food_table["食材碳足跡(gCO₂e)"].astype(float).round(1)
+            st.dataframe(food_table)
 
     # 料理方式
     st.markdown("### 🍳 料理方式（每道餐選一次）")
@@ -160,7 +151,7 @@ if st.session_state.stage == 1:
         drink_cf = float(dp["cf_kgco2e"])
         drink_name = dp["product_name"]
         st.info(f"本次飲料：**{drink_name}**（{drink_cf:.3f} kgCO₂e）")
-
+    
     # 交通
     st.markdown("### 🧭 採買交通（以你的定位/你設定的起點為中心）")
     origin_lat = st.session_state.origin["lat"]
@@ -179,7 +170,7 @@ if st.session_state.stage == 1:
     # 地圖和分店選擇
     st.markdown("#### 🗺️ 地圖（點橘色分店 marker 做決策）")
     map_state = st_folium(m, height=320, use_container_width=True, key="store_map")
-
+    
     # 圓餅圖與長條圖
     chart_data = pd.DataFrame([
         {"cat": "Food", "kgCO2e": food_sum},
@@ -211,7 +202,3 @@ if st.session_state.stage == 1:
         )
     )
     st.altair_chart(pie + labels, use_container_width=True)
-
-
-
-

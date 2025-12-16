@@ -11,10 +11,7 @@ import altair as alt
 import requests
 import folium
 from streamlit_folium import st_folium
-
-# geolocation：注意不要傳 key=...（你之前 TypeError 就是因為這個）
 from streamlit_geolocation import streamlit_geolocation
-
 
 # =========================
 # 0) 基本設定
@@ -45,30 +42,16 @@ h1, h2, h3 { letter-spacing: 0.2px; }
 APP_TITLE = "🍽️ 一餐的碳足跡大冒險：從農場到你的胃"
 
 # 你 repo 內的預設 Excel 檔名（在 repo 根目錄）
-EXCEL_PATH_DEFAULT = "產品碳足跡3.xlsx"
-
-# 報到名單（你可自行加）
-VALID_IDS = {
-    "BEE114105黃文瑜": {"name": "文瑜"},
-    "BEE114108陳依萱": {"name": "依萱"},
-}
-
-# 台中教育大學（預設座標；你也可以改成你要的）
-NTSU_LAT = 24.1477
-NTSU_LNG = 120.6736
-
+EXCEL_PATH_DEFAULT = "產品碳足跡4.xlsx"
 
 # =========================
 # 1) CF 解析：統一成 gCO2e
-#    支援：800.00g、0.8kg、1.00k、"155.00gCO2e"、"1.00kgCO2e"... 
 # =========================
 def parse_cf_to_g(value) -> float:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return float("nan")
 
-    # 數字：預設當作「g」還是「kg」？  
-    # 你的資料混用，單純數字很難判斷  
-    # 這裡採最保守：若數字 <= 50 當 kg（多數產品 kgCO2e 不會 >50）、否則當 g  
+    # 數字：預設當作「g」還是「kg」？
     if isinstance(value, (int, float)):
         v = float(value)
         if v <= 50:
@@ -84,7 +67,6 @@ def parse_cf_to_g(value) -> float:
         kg = float(s[:-1])
         return kg * 1000.0
 
-    # 末尾單位
     m = re.match(r"([-+]?\d*\.?\d+)(kg|g)?$", s)
     if m:
         num = float(m.group(1))
@@ -93,17 +75,14 @@ def parse_cf_to_g(value) -> float:
             return num * 1000.0
         if unit == "g":
             return num
-        # 沒單位：同上，<=50 當 kg
         return num * 1000.0 if num <= 50 else num
 
-    # 字串內含單位（例如：'800.00g(每瓶...)'）
     m2 = re.search(r"([-+]?\d*\.?\d+)\s*(kg|g)", s)
     if m2:
         num = float(m2.group(1))
         unit = m2.group(2)
         return num * 1000.0 if unit == "kg" else num
 
-    # 兜底：抓第一個數字
     m3 = re.search(r"([-+]?\d*\.?\d+)", s)
     if m3:
         num = float(m3.group(1))
@@ -117,7 +96,43 @@ def g_to_kg(g):
 
 
 # =========================
-# 2) 兩點直線距離（km）
+# 2) 讀取 Excel（前 3 欄：族群/品名/碳足跡）
+# =========================
+@st.cache_data(show_spinner=False)
+def load_data_from_excel(file_bytes: bytes) -> pd.DataFrame:
+    # 檢查檔案是否為 None 或空
+    if file_bytes is None or len(file_bytes) == 0:
+        raise ValueError("無效的檔案資料，請確保檔案已上傳。")
+    
+    try:
+        # 嘗試讀取 Excel 檔案
+        df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
+        if df.shape[1] < 3:
+            raise ValueError("Excel 欄位太少：至少 3 欄（族群、產品名稱、碳足跡）。")
+        
+        df.columns = ["group", "product_name", "cf_kgco2e"]
+        return df
+    except Exception as e:
+        st.error(f"檔案讀取錯誤: {e}")
+        raise e
+
+
+def read_excel_source() -> pd.DataFrame:
+    st.caption("📄 資料來源：優先讀取 repo 根目錄 Excel；若讀不到可改用上傳。")
+    try:
+        # 嘗試讀取預設的 Excel 檔案
+        with open(EXCEL_PATH_DEFAULT, "rb") as f:
+            return load_data_from_excel(f.read())
+    except Exception:
+        # 如果讀取失敗，提供上傳選項
+        up = st.file_uploader("或改用上傳 Excel（.xlsx）", type=["xlsx"])
+        if up is None:
+            raise FileNotFoundError(f"讀取失敗：請確認 {EXCEL_PATH_DEFAULT} 放在 repo 根目錄，或改用上傳。")
+        return load_data_from_excel(up.getvalue())
+
+
+# =========================
+# 3) 兩點直線距離（km）
 # =========================
 def haversine_km(lat1, lon1, lat2, lon2):
     R = 6371.0
@@ -129,140 +144,75 @@ def haversine_km(lat1, lon1, lat2, lon2):
 
 
 # =========================
-# 3) 以中心點搜尋附近分店（OSM Nominatim）
+# 4) Session 初始化
 # =========================
-def nominatim_search_nearby(query, lat, lng, radius_km=5, limit=60):
-    if not query.strip():
-        return []
-
-    lat_delta = radius_km / 111.0
-    lng_delta = radius_km / (111.0 * max(0.1, math.cos(math.radians(lat))))
-    viewbox = f"{lng-lng_delta},{lat+lat_delta},{lng+lng_delta},{lat-lat_delta}"
-
-    params = {
-        "q": query,
-        "format": "jsonv2",
-        "limit": str(limit),
-        "addressdetails": 1,
-        "viewbox": viewbox,
-        "bounded": 1,
-    }
-    headers = {
-        "User-Agent": "carbon-footprint-edu-app/1.0",
-        "Accept-Language": "zh-TW,zh,en",
-    }
-
-    r = requests.get("https://nominatim.openstreetmap.org/search", params=params, headers=headers, timeout=10)
-    r.raise_for_status()
-    data = r.json()
-
-    out = []
-    for x in data:
-        display_name = x.get("display_name", "")
-        out.append(
-            {
-                "display_name": display_name,
-                "name": (display_name.split(",")[0] if display_name else "").strip(),
-                "lat": float(x["lat"]),
-                "lng": float(x["lon"]),
-            }
-        )
-    return out
+st.session_state.setdefault("page", "home")
+st.session_state.setdefault("visitor_id", "")
+st.session_state.setdefault("student_name", "")
+st.session_state.setdefault("device_id", str(uuid.uuid4())[:8])
+st.session_state.setdefault("stage", 1)  # 1=第一階段，2=第二階段
+st.session_state.setdefault("meal_items", None)  # 主餐
+st.session_state.setdefault("cook_method", {})  # 料理方式
+st.session_state.setdefault("drink_pick", None)  # 飲料
 
 
 # =========================
-# 4) 讀 Excel（前 3 欄：族群、品名、碳足跡）
-#    -> 統一生成 cf_gco2e
+# 5) 讀取資料並顯示
 # =========================
-@st.cache_data(show_spinner=False)
-def load_data_from_excel(file_bytes: bytes) -> pd.DataFrame:
-    df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
-    if df.shape[1] < 3:
-        raise ValueError("Excel 欄位太少：至少 3 欄（族群、品名、碳足跡）。")
+df_all = read_excel_source()
 
-    df = df.iloc[:, :3].copy()  # 取前 3 欄
-    df.columns = ["code", "product_name", "product_carbon_footprint_data"]
+# 抽取食材資料
+df_food = df_all[df_all["group"] == "1"].copy()
+df_dessert = df_all[df_all["group"] == "3"].copy()
 
-    df["code"] = df["code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    df["product_name"] = df["product_name"].astype(str).str.strip()
-
-    df["cf_gco2e"] = df["product_carbon_footprint_data"].apply(parse_cf_to_g)
-    df = df.dropna(subset=["cf_gco2e"]).reset_index(drop=True)
-
-    # cf_kgco2e 方便計算
-    df["cf_kgco2e"] = df["cf_gco2e"].apply(g_to_kg)
-    return df
+if len(df_food) == 0:
+    st.error("找不到食材資料，請確認資料檔案正確。")
+    st.stop()
 
 
 # =========================
-# 5) 抽樣工具
+# 6) 主餐設定
 # =========================
-def safe_sample(sub_df: pd.DataFrame, n: int) -> pd.DataFrame:
-    if len(sub_df) == 0:
-        return sub_df.copy()
-    n2 = min(n, len(sub_df))
-    return sub_df.sample(n=n2, replace=False, random_state=random.randint(1, 10_000)).reset_index(drop=True)
+if st.session_state.stage == 1:
+    st.title("🍛 主餐與交通階段")
+    
+    if st.button("🎲 抽 3 項食材（主餐）"):
+        st.session_state.meal_items = df_food.sample(n=3).reset_index(drop=True)
+        st.session_state.cook_method = {i: "水煮" for i in range(len(st.session_state.meal_items))}
+        st.session_state.drink_pick = None
+        st.session_state.stage = 2
+        st.rerun()
 
+    # 顯示已抽食材
+    if st.session_state.meal_items is not None:
+        meal_df = st.session_state.meal_items
+        st.subheader("主餐選擇")
+        st.dataframe(meal_df)
 
-def pick_one(df: pd.DataFrame, code_value: str) -> dict:
-    sub = df[df["code"] == code_value]
-    if len(sub) == 0:
-        raise ValueError(f"在 Excel 中找不到 code = {code_value} 的資料。")
-    row = sub.sample(n=1, random_state=random.randint(1, 10_000)).iloc[0]
-    return {
-        "code": row["code"],
-        "product_name": row["product_name"],
-        "cf_gco2e": float(row["cf_gco2e"]),
-        "cf_kgco2e": float(row["cf_kgco2e"]),
-    }
-
-
-# =========================
-# 6) 取得定位（只抓一次）
-# =========================
-# 確保 geo 被初始化
-if "geo" not in st.session_state:
-    st.session_state.geo = None
-
-# 若 geo 為 None，則呼叫 geolocation
-if st.session_state.geo is None:
-    st.session_state.geo = streamlit_geolocation()  # 不要傳 key=...
-
-# 確保 origin 被初始化
-if "origin" not in st.session_state:
-    st.session_state.origin = {"lat": None, "lng": None}
-
-geo = st.session_state.geo or {}
-geo_lat = geo.get("latitude")
-geo_lng = geo.get("longitude")
-geo_lat = float(geo_lat) if geo_lat is not None else None
-geo_lng = float(geo_lng) if geo_lng is not None else None
-
-# 如果 origin 尚未設置並且已經取得定位資料，則設置 origin
-if st.session_state.origin["lat"] is None and geo_lat is not None and geo_lng is not None:
-    st.session_state.origin = {"lat": geo_lat, "lng": geo_lng}
+    st.markdown("---")
+    
+    # 完成第一階段
+    if st.button("➡️ 進入第二階段：甜點與餐具包材"):
+        st.session_state.stage = 2
+        st.rerun()
 
 
 # =========================
-# 10) 主頁：讀 Excel / 分類
+# 7) 第二階段設定
 # =========================
-df_all = load_data_from_excel(EXCEL_PATH_DEFAULT)
+if st.session_state.stage == 2:
+    st.title("🍰 第二階段：甜點與餐具包材")
 
-# 你目前的分類規則（依你前面 app）
-df_food = df_all[df_all["code"] == "1"].copy()     # 食材
-df_oil = df_all[df_all["code"] == "1-1"].copy()    # 油
-df_water = df_all[df_all["code"] == "1-2"].copy()  # 水
-df_drink = df_all[df_all["code"] == "2"].copy()    # 飲料
+    # 隨機選擇 5 種甜點
+    if len(df_dessert) == 0:
+        st.warning("未找到甜點資料，請檢查檔案。")
+    else:
+        st.session_state.dessert_pool = df_dessert.sample(n=5).reset_index(drop=True)
+        st.multiselect("選擇甜點（請選擇 2 種）", st.session_state.dessert_pool["product_name"].tolist())
 
-# 第二階段
-df_dessert = df_all[df_all["code"] == "3"].copy()  # 甜點（你要「從 3 中」）
-df_packaging = df_all[df_all["code"].isin(["4-1","4-2","4-3","4-4","4-5","4-6"])].copy()
-
-# =========================
-# 11) 第一階段：主餐/料理/飲料/交通（可收起）
-# =========================
-# 略過較長部分，請將主餐碳足跡加總並顯示交通
-
-
-
+    # 顯示結果
+    st.markdown("### 甜點總碳足跡")
+    # 碳足跡計算及顯示（依您的需求可以進行調整）
+    total_carbon_footprint = st.session_state.meal_items["cf_kgco2e"].sum()
+    st.write(f"總碳足跡: {total_carbon_footprint:.2f} kg CO₂e")
 

@@ -83,16 +83,18 @@ def load_data_from_excel(file_bytes: bytes) -> pd.DataFrame:
     df["cf_kgco2e"] = df["cf_gco2e"] / 1000  # convert g to kg
     return df
 
+# 讀取檔案的部分
 def read_excel_source() -> pd.DataFrame:
-    st.caption("📄 資料來源：優先讀取 repo 根目錄 Excel；若讀不到可改用上傳。")
     try:
         with open("碳足跡4.xlsx", "rb") as f:
-            return load_data_from_excel(f.read())
-    except Exception:
-        up = st.file_uploader("或改用上傳 Excel（.xlsx）", type=["xlsx"])
+            return load_data_from_excel(f.read())  # 如果成功讀取檔案
+    except FileNotFoundError:
+        up = st.file_uploader("請上傳《碳足跡4.xlsx》檔案", type=["xlsx"])  # 讓使用者上傳檔案
         if up is None:
-            raise FileNotFoundError(f"讀取失敗：請確認 '碳足跡4.xlsx' 放在 repo 根目錄，或改用上傳。")
-        return load_data_from_excel(up.getvalue())
+            st.error("請確認 '碳足跡4.xlsx' 存在或上傳檔案")  # 若無檔案則顯示錯誤訊息
+            return None
+        return load_data_from_excel(up.getvalue())  # 讀取上傳的檔案
+
 
 # =========================
 # 進行選擇與計算
@@ -171,3 +173,4 @@ def main():
 # =========================
 if __name__ == "__main__":
     main()
+

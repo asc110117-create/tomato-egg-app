@@ -1,3 +1,4 @@
+
 import random
 import pandas as pd
 import streamlit as st
@@ -191,11 +192,16 @@ transport_cf = TRANSPORT_CO2.get(transport_mode, 0.0) * distance_km
 # 顯示最終碳足跡結果
 total = food_sum + cook_sum + drink_cf + dessert_sum + transport_cf
 st.markdown(f"### ✅ 總碳足跡：{total:.3f} kgCO₂e")
-"""
 
-# Write the complete script to a file
-file_path = "/mnt/data/tomato_egg_app_combined.py"
-with open(file_path, "w", encoding="utf-8") as file:
-    file.write(combined_code)
-
-file_path  # Return the file path for downloading
+# 結果下載
+if st.button("⬇️ 下載結果 CSV"):
+    result_df = pd.DataFrame({
+        '項目': ['主食', '料理', '飲料', '甜點', '交通'],
+        '碳足跡 (kgCO₂e)': [food_sum, cook_sum, drink_cf, dessert_sum, transport_cf]
+    })
+    st.download_button(
+        label="下載結果",
+        data=result_df.to_csv(index=False).encode('utf-8-sig'),
+        file_name="carbon_footprint_result.csv",
+        mime="text/csv"
+    )

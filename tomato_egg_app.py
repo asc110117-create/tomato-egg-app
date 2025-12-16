@@ -141,6 +141,16 @@ def load_data_from_excel(file: BytesIO) -> pd.DataFrame:
 
 
 # =========================
+# 抽樣工具
+# =========================
+def safe_sample(sub_df: pd.DataFrame, n: int) -> pd.DataFrame:
+    if len(sub_df) == 0:
+        return sub_df.copy()
+    n2 = min(n, len(sub_df))
+    return sub_df.sample(n=n2, replace=False, random_state=random.randint(1, 10_000)).reset_index(drop=True)
+
+
+# =========================
 # 主餐、甜點和包材選擇
 # =========================
 st.title(APP_TITLE)

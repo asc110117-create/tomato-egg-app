@@ -1,166 +1,95 @@
 
-# tomato_egg_app_v4_with_map.py
-# 一餐的碳足跡大冒險（v4）
-# 重點：穩定版 + 可選地圖（點選店家）+ 交通碳足跡（走路/機車/貨車-延噸公里）
-# 資料來源：使用者上傳【碳足跡4.xlsx】
-
 import streamlit as st
 import pandas as pd
-import math
-from io import BytesIO
-from datetime import datetime
+import random
 
-import folium
-from streamlit_folium import st_folium
+st.set_page_config(page_title="一餐的碳足跡大冒險", page_icon="🍽️")
 
-# -----------------
-# 基本設定
-# -----------------
-st.set_page_config(page_title="一餐的碳足跡大冒險 v4", layout="centered")
-st.title("🍽️ 一餐的碳足跡大冒險（v4）")
+st.title("🍽️ 一餐的碳足跡大冒險")
 
-# -----------------
-# 工具函式
-# -----------------
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2-lat1)
-    dl = math.radians(lon2-lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dl/2)**2
-    return 2*R*math.asin(math.sqrt(a))
-
-def load_excel(upload):
-    df = pd.read_excel(upload)
-    df.columns = ["group","name","cf"]
+@st.cache_data
+def load_excel():
+    df = pd.read_excel("碳足跡4.xlsx")
+    df.columns = ["group", "name", "cf"]
     df["cf"] = df["cf"].astype(float)
     return df
 
-# -----------------
-# 1️⃣ 基本資料
-# -----------------
-student = st.text_input("請輸入姓名")
-if student:
-    st.info(f"👤 學生：{student}（系統將自動記錄測驗次數）")
+df = load_excel()
 
-upload = st.file_uploader("上傳【碳足跡4.xlsx】", type=["xlsx"])
-if not upload:
-    st.stop()
+df_food = df[df["group"] == 1]
+df_water = df[df["group"] == "1-1"]
+df_oil = df[df["group"] == "1-2"]
 
-df = load_excel(upload)
+student = st.text_input("請輸入你的名字")
 
-# -----------------
-# 2️⃣ 主食（group 1）
-# -----------------
-st.header("🍱 主食（group 1）")
+st.divider()
 
-food_df = df[df["group"]==1]
-meal = st.multiselect(
-    "選擇主食（可選多項）",
-    options=food_df["name"].tolist()
-)
+st.subheader("🍚 主食（隨機 5 選 2）")
 
-food_cf = food_df[food_df["name"].isin(meal)]["cf"].sum()
+if "food_pool" not in st.session_state:
+    st.session_state.food_pool = df_food.sample(n=min(5, len(df_food)), replace=False)
 
-# -----------------
-# 3️⃣ 飲料（group 2）
-# -----------------
-st.header("🥤 飲料（group 2）")
+food_pool = st.session_state.food_pool
 
-drink_df = df[df["group"]==2]
-drink_options = ["不喝"] + [
-    f"{r.name}（{r.cf} kgCO₂e）" for r in drink_df.itertuples()
+food_options = [
+    f"{row['name']}（{row['cf']} kgCO₂e）"
+    for _, row in food_pool.iterrows()
 ]
-drink_choice = st.selectbox("選擇飲料", drink_options)
 
-drink_cf = 0.0
-if drink_choice != "不喝":
-    drink_name = drink_choice.split("（")[0]
-    drink_cf = drink_df[drink_df["name"]==drink_name]["cf"].values[0]
-
-# -----------------
-# 4️⃣ 甜點（group 3）
-# -----------------
-st.header("🍰 甜點（group 3）")
-
-dessert_df = df[df["group"]==3]
-dessert_options = [
-    f"{r.name}（{r.cf} kgCO₂e）" for r in dessert_df.itertuples()
-]
-dessert_choice = st.multiselect("選擇甜點（可複選）", dessert_options)
-
-dessert_cf = 0.0
-for d in dessert_choice:
-    name = d.split("（")[0]
-    dessert_cf += dessert_df[dessert_df["name"]==name]["cf"].values[0]
-
-# -----------------
-# 5️⃣ 地圖選擇商店（交通）
-# -----------------
-st.header("🗺️ 交通（地圖選點）")
-
-origin_lat, origin_lng = 24.1477, 120.6736  # 台中教育大學
-m = folium.Map(location=[origin_lat, origin_lng], zoom_start=14)
-folium.Marker([origin_lat, origin_lng], tooltip="出發點").add_to(m)
-
-map_data = st_folium(m, height=350, width=700)
-
-distance = 0.0
-if map_data and map_data.get("last_clicked"):
-    dest_lat = map_data["last_clicked"]["lat"]
-    dest_lng = map_data["last_clicked"]["lng"]
-    distance = haversine(origin_lat, origin_lng, dest_lat, dest_lng)
-    st.success(f"📏 估算距離：約 {distance:.2f} km")
-
-transport_mode = st.selectbox(
-    "交通工具",
-    [
-        "走路（0）",
-        "機車（0.05 kgCO₂e/km）",
-        "貨車（延噸公里）"
-    ]
+selected_foods = st.multiselect(
+    "請選擇 2 種主食",
+    options=food_options,
+    max_selections=2
 )
 
-transport_cf = 0.0
-formula = ""
+results = []
 
-if transport_mode.startswith("機車"):
-    transport_cf = distance * 0.05
-    formula = f"{distance:.2f} × 0.05"
+if len(selected_foods) == 2:
+    st.markdown("### 🍳 你所選的食材為：")
 
-elif transport_mode.startswith("貨車"):
-    weight_kg = st.number_input("貨物重量（kg）", value=1.0)
-    tkm = 2.71
-    transport_cf = distance * (weight_kg/1000) * tkm
-    formula = f"{distance:.2f} × {weight_kg/1000:.4f} × {tkm}"
+    for idx, choice in enumerate(selected_foods):
+        row = food_pool.iloc[food_options.index(choice)]
+        food_name = row["name"]
+        food_cf = row["cf"]
 
-# -----------------
-# 6️⃣ 結果與下載
-# -----------------
-total = food_cf + drink_cf + dessert_cf + transport_cf
+        method = st.radio(
+            f"{food_name}（{food_cf} kgCO₂e）料理方式",
+            ["水煮", "油炸"],
+            key=f"method_{idx}",
+            horizontal=True
+        )
 
-st.header("✅ 碳足跡結果")
-st.write(f"🍱 主食：{food_cf:.2f} kgCO₂e")
-st.write(f"🥤 飲料：{drink_cf:.2f} kgCO₂e")
-st.write(f"🍰 甜點：{dessert_cf:.2f} kgCO₂e")
-st.write(f"🚚 交通：{transport_cf:.2f} kgCO₂e")
-if formula:
-    st.caption(f"公式：{formula}")
-st.success(f"🌍 總計：{total:.2f} kgCO₂e")
+        if method == "水煮":
+            pick = df_water.sample(1).iloc[0]
+        else:
+            pick = df_oil.sample(1).iloc[0]
 
-result = pd.DataFrame([{
-    "student": student,
-    "food": food_cf,
-    "drink": drink_cf,
-    "dessert": dessert_cf,
-    "transport": transport_cf,
-    "total": total,
-    "time": datetime.now().isoformat()
-}])
+        cook_name = pick["name"]
+        cook_cf = pick["cf"]
 
-st.download_button(
-    "⬇️ 下載 CSV",
-    result.to_csv(index=False).encode("utf-8-sig"),
-    file_name="carbon_result_v4.csv",
-    mime="text/csv"
-)
+        st.caption(f"👉 料理耗材：{cook_name}（{cook_cf} kgCO₂e）")
+
+        results.append({
+            "food": food_name,
+            "food_cf": food_cf,
+            "method": method,
+            "cook_item": cook_name,
+            "cook_cf": cook_cf
+        })
+
+if results:
+    st.divider()
+    total_cf = sum(r["food_cf"] + r["cook_cf"] for r in results)
+    st.success(f"🌱 主食階段碳足跡小計：{total_cf:.2f} kgCO₂e")
+
+    df_out = pd.DataFrame(results)
+    df_out["student"] = student
+    df_out["total_item_cf"] = df_out["food_cf"] + df_out["cook_cf"]
+
+    csv = df_out.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "⬇️ 下載主食計算結果 CSV",
+        data=csv,
+        file_name=f"{student}_主食碳足跡.csv",
+        mime="text/csv"
+    )

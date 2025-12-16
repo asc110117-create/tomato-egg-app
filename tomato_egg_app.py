@@ -2,7 +2,7 @@
 import re
 import random
 import math
-import uuidm
+import uuid
 from io import BytesIO
 from datetime import datetime
 
@@ -233,4 +233,5 @@ else:
         )
     )
     st.altair_chart(pie + labels, use_container_width=True)
+
 

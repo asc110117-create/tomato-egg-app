@@ -1,176 +1,94 @@
-import random
-import math
-from io import BytesIO
 import pandas as pd
 import streamlit as st
-import altair as alt
-import folium
-from streamlit_folium import st_folium
-from streamlit_geolocation import streamlit_geolocation
-import gspread
-from google.oauth2.service_account import Credentials
+import random
 
 # =========================
-# 基本設定
+# 讀取 Excel（簡化過的版本，只有三個欄位）
 # =========================
-st.set_page_config(page_title="碳足跡大冒險", page_icon="🍽️", layout="centered")
-
-# 讀取 Google Sheet secrets
-def sheets_available() -> bool:
-    try:
-        _ = st.secrets["gcp_service_account"]
-        _ = st.secrets["google_sheet"]["spreadsheet_id"]
-        _ = st.secrets["google_sheet"]["worksheet_name"]
-        return True
-    except Exception:
-        return False
-
-# =========================
-# 定位及地圖
-# =========================
-def haversine_km(lat1, lon1, lat2, lon2):
-    R = 6371.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlmb = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlmb / 2) ** 2
-    return 2 * R * math.asin(math.sqrt(a))
-
-def nominatim_search_nearby(query, lat, lng, radius_km=5, limit=60):
-    if not query.strip():
-        return []
-    lat_delta = radius_km / 111.0
-    lng_delta = radius_km / (111.0 * max(0.1, math.cos(math.radians(lat))))
-    viewbox = f"{lng-lng_delta},{lat+lat_delta},{lng+lng_delta},{lat-lat_delta}"
-
-    params = {
-        "q": query,
-        "format": "jsonv2",
-        "limit": str(limit),
-        "addressdetails": 1,
-        "viewbox": viewbox,
-        "bounded": 1,
-    }
-    headers = {
-        "User-Agent": "carbon-footprint-edu-app/1.0",
-        "Accept-Language": "zh-TW,zh,en",
-    }
-
-    r = requests.get("https://nominatim.openstreetmap.org/search", params=params, headers=headers, timeout=10)
-    r.raise_for_status()
-    data = r.json()
-
-    out = []
-    for x in data:
-        display_name = x.get("display_name", "")
-        out.append(
-            {"display_name": display_name, "name": (display_name.split(",")[0] if display_name else "").strip(),
-             "lat": float(x["lat"]), "lng": float(x["lon"])}
-        )
-    return out
-
-# =========================
-# 讀取Excel資料
-# =========================
-@st.cache_data(show_spinner=False)
-def load_data_from_excel(file_bytes: bytes) -> pd.DataFrame:
-    df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
-    if df.shape[1] < 4:
-        raise ValueError("Excel 欄位太少：至少 4 欄（編號、品名、碳足跡、宣告單位）。")
-    df = df.iloc[:, :4].copy()
-    df.columns = ["code", "product_name", "product_carbon_footprint_data", "declared_unit"]
-    df["cf_gco2e"] = df["product_carbon_footprint_data"].apply(lambda x: float(str(x).replace('gCO2e','').replace('kgCO2e', '').replace('g', '').replace('kg','').strip()) if isinstance(x, str) else 0)
-    df["cf_kgco2e"] = df["cf_gco2e"] / 1000  # convert g to kg
+def load_data_from_excel(file_bytes):
+    df = pd.read_excel(file_bytes)
+    # 假設文件有三個欄位：族群、產品名稱、碳足跡(kg)
+    df.columns = ['group', 'product_name', 'cf_kg']
+    df['cf_kg'] = df['cf_kg'].astype(float)  # 碳足跡轉換為數字格式
     return df
 
-# 讀取檔案的部分
-def read_excel_source() -> pd.DataFrame:
-    try:
-        with open("碳足跡4.xlsx", "rb") as f:
-            return load_data_from_excel(f.read())  # 如果成功讀取檔案
-    except FileNotFoundError:
-        up = st.file_uploader("請上傳《碳足跡4.xlsx》檔案", type=["xlsx"])  # 讓使用者上傳檔案
-        if up is None:
-            st.error("請確認 '碳足跡4.xlsx' 存在或上傳檔案")  # 若無檔案則顯示錯誤訊息
-            return None
-        return load_data_from_excel(up.getvalue())  # 讀取上傳的檔案
-
+# =========================
+# 主食隨機選擇
+# =========================
+def random_main_dish(df):
+    # 隨機選擇5個主食
+    main_dish_options = df.sample(n=5)
+    return main_dish_options
 
 # =========================
-# 進行選擇與計算
+# 主食選擇與碳足跡計算
 # =========================
-def calculate_transport_cf(distance, weight, tkm):
-    return distance * weight * tkm
+def main_dish_selection():
+    # 讀取Excel文件
+    uploaded_file = st.file_uploader("請上傳碳足跡檔案", type=["xlsx"])
+    if uploaded_file is not None:
+        df = load_data_from_excel(uploaded_file)
+        
+        # 顯示隨機選擇的5項食材
+        main_dish_options = random_main_dish(df)
+        st.write("請選擇2種主食：")
+        main_dish_selection = st.multiselect(
+            "選擇兩種主食",
+            options=main_dish_options['product_name'],
+            default=[main_dish_options['product_name'].iloc[0], main_dish_options['product_name'].iloc[1]]
+        )
+
+        # 顯示選擇的主食和對應碳足跡
+        selected_dishes = main_dish_options[main_dish_options['product_name'].isin(main_dish_selection)]
+        for index, row in selected_dishes.iterrows():
+            st.write(f"{row['product_name']} - {row['cf_kg']} kgCO2e")
 
 # =========================
-# 主食選擇
+# 烹飪方式選擇
 # =========================
-def choose_main_dish(df_food):
-    food_options = df_food.sample(5)
-    selected_food = st.multiselect("選擇2個主食", options=food_options['product_name'].tolist(), default=food_options['product_name'].tolist()[:2])
-    selected_food_data = food_options[food_options['product_name'].isin(selected_food)]
-    return selected_food_data
+def cooking_method_selection():
+    cooking_method = st.selectbox(
+        "請選擇烹飪方式（水煮或油炸）",
+        ["水煮", "油炸"]
+    )
+    return cooking_method
 
 # =========================
-# 交通工具選擇
+# 計算碳足跡
 # =========================
-def choose_transport():
-    transport_options = ["走路", "機車", "汽車", "貨車"]
-    transport = st.selectbox("選擇交通工具", transport_options)
-    return transport
+def calculate_total_carbon_footprint(selected_dishes, cooking_method):
+    total_carbon_footprint = 0
+    for index, row in selected_dishes.iterrows():
+        # 根據選擇的烹飪方式增加相應的碳足跡
+        if cooking_method == "油炸":
+            total_carbon_footprint += row['cf_kg'] * 1.1  # 假設油炸會增加10%的碳足跡
+        else:
+            total_carbon_footprint += row['cf_kg']
+    return total_carbon_footprint
 
 # =========================
-# 寫入 Google Sheet
+# 顯示總碳足跡
 # =========================
-def write_to_google_sheet(row_dict: dict):
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
-    gc = gspread.authorize(creds)
-    sheet = gc.open_by_key(st.secrets["google_sheet"]["spreadsheet_id"])
-    worksheet = sheet.get_worksheet(0)
-    worksheet.append_row(list(row_dict.values()))
+def show_total_carbon_footprint(total_carbon_footprint):
+    st.write(f"總碳足跡：{total_carbon_footprint:.2f} kgCO2e")
 
 # =========================
-# 主程式
+# 主要功能執行
 # =========================
 def main():
-    st.title("一餐的碳足跡大冒險：從農場到你的胃")
+    st.title("一餐的碳足跡計算器")
     
-    df_all = read_excel_source()
-
     # 主食選擇
-    selected_food = choose_main_dish(df_all[df_all['code'] == '1'])
+    main_dish_selection()
 
-    # 交通選擇
-    transport_mode = choose_transport()
+    # 烹飪方式選擇
+    cooking_method = cooking_method_selection()
 
-    # 計算交通碳足跡
-    transport_distance = 10  # 預設為10km
-    transport_weight = selected_food["cf_kgco2e"].sum() / 1000  # 食材總重（公斤）
-    transport_tkm = {"機車": 0.0951, "汽車": 0.115, "貨車": 2.71}.get(transport_mode, 0.0)
-    transport_cf = calculate_transport_cf(transport_distance, transport_weight, transport_tkm)
+    # 碳足跡計算
+    total_carbon_footprint = calculate_total_carbon_footprint(selected_dishes, cooking_method)
     
-    st.write(f"您選擇的交通工具是：{transport_mode}，碳足跡為：{transport_cf:.3f} kgCO₂e")
+    # 顯示總碳足跡
+    show_total_carbon_footprint(total_carbon_footprint)
 
-    # 顯示選擇的食材
-    st.write(f"您選擇的食材為：{', '.join(selected_food['product_name'].tolist())}")
-
-    # 統計結果
-    total_cf = selected_food['cf_kgco2e'].sum() + transport_cf
-    st.write(f"您的總碳足跡為：{total_cf:.3f} kgCO₂e")
-
-    # 寫入 Google Sheet
-    if st.button("將結果寫入 Google Sheet"):
-        row_dict = {
-            "食材": ", ".join(selected_food['product_name'].tolist()),
-            "交通工具": transport_mode,
-            "碳足跡": f"{total_cf:.3f}",
-        }
-        write_to_google_sheet(row_dict)
-        st.success("結果已成功寫入 Google Sheet！")
-
-# =========================
-# 程式執行
-# =========================
 if __name__ == "__main__":
     main()
-

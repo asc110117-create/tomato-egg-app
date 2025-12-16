@@ -1,6 +1,3 @@
-if 'meal_items' not in st.session_state:
-    st.session_state.meal_items = pd.DataFrame()  # 初始化為空的 DataFrame
-
 
 import re
 import random
@@ -11,6 +8,11 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+if 'meal_items' not in st.session_state:
+    st.session_state.meal_items = pd.DataFrame()  # 初始化為空的 DataFrame
+
+
+
 import altair as alt
 import requests
 import folium
@@ -196,5 +198,6 @@ if st.session_state.stage == 1:
         )
     )
     st.altair_chart(pie + labels, use_container_width=True)
+
 
 

@@ -44,18 +44,8 @@ h1, h2, h3 { letter-spacing: 0.2px; }
 
 APP_TITLE = "🍽️ 一餐的碳足跡大冒險：從農場到你的胃"
 
-# 你 repo 內的預設 Excel 檔名（在 repo 根目錄）
-EXCEL_PATH_DEFAULT = "產品碳足跡3.xlsx"
-
-# 報到名單（你可自行加）
-VALID_IDS = {
-    "BEE114105黃文瑜": {"name": "文瑜"},
-    "BEE114108陳依萱": {"name": "依萱"},
-}
-
-# 台中教育大學（預設座標；你也可以改成你要的）
-NTSU_LAT = 24.1477
-NTSU_LNG = 120.6736
+# 交通方式的排放係數
+EF_MAP = {"機車": 0.0951, "汽車": 0.115, "貨車": 2.71}
 
 
 # =========================
@@ -120,17 +110,12 @@ def haversine_km(lat1, lon1, lat2, lon2):
 
 
 # =========================
-# 交通方式的排放係數
+# 讀取 Excel
 # =========================
-EF_MAP = {"機車": 0.0951, "汽車": 0.115, "貨車": 2.71}
-
-# =========================
-# 讀 Excel
-# =========================
-@st.cache_data(show_spinner=False)
-def load_data_from_excel(file_bytes: bytes) -> pd.DataFrame:
+def load_data_from_excel(file: BytesIO) -> pd.DataFrame:
     try:
-        df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
+        # 讀取 Excel 檔案
+        df = pd.read_excel(file, engine="openpyxl")
         
         # 確認欄位名稱
         st.write("Excel 欄位名稱：", df.columns)
@@ -160,42 +145,47 @@ def load_data_from_excel(file_bytes: bytes) -> pd.DataFrame:
 # =========================
 st.title(APP_TITLE)
 
-# 讀取數據
-df_all = load_data_from_excel(EXCEL_PATH_DEFAULT)
+# 讀取檔案並上傳
+uploaded_file = st.file_uploader("請上傳 Excel 檔案", type=["xlsx"])
 
-# 主餐、甜點和包材選擇
-df_food = df_all[df_all["group"] == "1"].copy() 
-df_dessert = df_all[df_all["group"] == "3"].copy()
-df_packaging = df_all[df_all["group"].isin(["4-1", "4-2", "4-3", "4-4", "4-5", "4-6"])].copy()
+if uploaded_file is not None:
+    # 使用者上傳了檔案
+    df_all = load_data_from_excel(uploaded_file)
 
-if len(df_food) == 0:
-    st.error("Excel 裡找不到 code=1 的食材。請確認『族群』欄有 1。")
-    st.stop()
+    # 主餐、甜點和包材選擇
+    df_food = df_all[df_all["group"] == "1"].copy() 
+    df_dessert = df_all[df_all["group"] == "3"].copy()
+    df_packaging = df_all[df_all["group"].isin(["4-1", "4-2", "4-3", "4-4", "4-5", "4-6"])].copy()
 
-# 合併階段
-st.subheader("所有流程合併：主餐、甜點與交通")
+    if len(df_food) == 0:
+        st.error("Excel 裡找不到 code=1 的食材。請確認『族群』欄有 1。")
+        st.stop()
 
-# 甜點選擇：隨機 5 種，選 2
-if len(df_dessert) == 0:
-    st.warning("找不到甜點資料。")
-    dessert_sum = 0.0
+    # 合併階段
+    st.subheader("所有流程合併：主餐、甜點與交通")
+
+    # 甜點選擇：隨機 5 種，選 2
+    if len(df_dessert) == 0:
+        st.warning("找不到甜點資料。")
+        dessert_sum = 0.0
+    else:
+        st.markdown("### 甜點選擇（隨機 5 種，請選 2 種）")
+        st.session_state.dessert_pool = safe_sample(df_dessert, 5)
+        dessert_options = st.session_state.dessert_pool["product_name"].tolist()
+        selected_desserts = st.multiselect("請選擇 2 種甜點", options=dessert_options)
+        dessert_sum = df_dessert[df_dessert["product_name"].isin(selected_desserts)]["cf_kgco2e"].sum()
+
+    # 交通選擇
+    st.markdown("### 交通方式")
+    transport_mode = st.selectbox("選擇交通方式", list(EF_MAP.keys()))
+    ef = EF_MAP[transport_mode]
+    st.number_input("交通碳足跡排放係數", value=ef, step=0.001, key="ef_final")
+
+    # 綜合計算
+    total_food_sum = df_food["cf_kgco2e"].sum()
+    total_transport_sum = ef * 10  # 假設 10 km 單程
+    total_sum = total_food_sum + dessert_sum + total_transport_sum
+
+    st.write(f"總計碳足跡：{total_sum:.3f} kgCO₂e")
 else:
-    st.markdown("### 甜點選擇（隨機 5 種，請選 2 種）")
-    st.session_state.dessert_pool = safe_sample(df_dessert, 5)
-    dessert_options = st.session_state.dessert_pool["product_name"].tolist()
-    selected_desserts = st.multiselect("請選擇 2 種甜點", options=dessert_options)
-    dessert_sum = df_dessert[df_dessert["product_name"].isin(selected_desserts)]["cf_kgco2e"].sum()
-
-# 交通選擇
-st.markdown("### 交通方式")
-transport_mode = st.selectbox("選擇交通方式", list(EF_MAP.keys()))
-ef = EF_MAP[transport_mode]
-st.number_input("交通碳足跡排放係數", value=ef, step=0.001, key="ef_final")
-
-# 綜合計算
-total_food_sum = df_food["cf_kgco2e"].sum()
-total_transport_sum = ef * 10  # 假設 10 km 單程
-total_sum = total_food_sum + dessert_sum + total_transport_sum
-
-st.write(f"總計碳足跡：{total_sum:.3f} kgCO₂e")
-
+    st.warning("請上傳 Excel 檔案來開始分析。")

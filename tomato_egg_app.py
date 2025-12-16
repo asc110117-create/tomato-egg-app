@@ -1,3 +1,6 @@
+st.write(st.secrets["google_service_account"])
+
+
 import random
 import pandas as pd
 import streamlit as st
@@ -238,3 +241,4 @@ if st.button("📤 送出並寫入 Google Sheet（全班彙整）", use_containe
     except Exception as e:
         st.error("寫入失敗：請檢查 ①服務帳戶是否已被共用為「編輯者」 ② spreadsheet_id / worksheet_name 是否正確 ③ Sheets API 是否已啟用。")
         st.exception(e)
+

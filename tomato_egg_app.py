@@ -2,7 +2,7 @@
 import re
 import random
 import math
-import uuid
+import uuidm
 from io import BytesIO
 from datetime import datetime
 
@@ -90,6 +90,33 @@ def parse_cf_to_g(value) -> float:
 # =========================
 if st.session_state.stage == 1:
     st.subheader("🍛 第一階段：主餐與採買")
+# 檢查 meal_df 是否有效
+if 'meal_items' in st.session_state and not st.session_state.meal_items.empty:
+    meal_df = st.session_state.meal_items.reset_index(drop=True)
+    
+    # 確保 meal_df 不是空的
+    if meal_df.empty:
+        st.error("meal_df 是空的，請確認資料加載流程。")
+    else:
+        for i in range(len(meal_df)):
+            item_name = meal_df.loc[i, "product_name"]
+            item_cf_kg = float(meal_df.loc[i, "cf_kgco2e"])
+            st.markdown(f"**第 {i+1} 道：{item_name}**（食材 {item_cf_kg:.3f} kgCO₂e）")
+            options = ["水煮", "煎炸"]
+            current_method = st.session_state.cook_method.get(i, "水煮")
+            chosen = st.radio(
+                " ",
+                options,
+                index=0 if current_method == "水煮" else 1,
+                horizontal=True,
+                key=f"cook_choice_{i}",
+                label_visibility="collapsed",
+            )
+
+            new_method = "水煮" if chosen.startswith("水煮") else "煎炸"
+            st.session_state.cook_method[i] = new_method
+else:
+    st.error("meal_items 尚未初始化或為空，請先加載資料。")
 
     # 檢查 'meal_items' 是否已初始化
     if 'meal_items' not in st.session_state or st.session_state.meal_items.empty:
@@ -206,3 +233,4 @@ if st.session_state.stage == 1:
         )
     )
     st.altair_chart(pie + labels, use_container_width=True)
+

@@ -1,3 +1,4 @@
+
 import random
 import pandas as pd
 import streamlit as st
@@ -202,11 +203,3 @@ if st.button("⬇️ 下載結果 CSV"):
         file_name="carbon_footprint_result.csv",
         mime="text/csv"
     )
-"""
-
-# Write the complete script to a file
-file_path = "/mnt/data/tomato_egg_app_combined_with_transport_final.py"
-with open(file_path, "w", encoding="utf-8") as file:
-    file.write(fixed_code)
-
-file_path  # Return the file path for downloading

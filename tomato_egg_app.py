@@ -131,15 +131,19 @@ EF_MAP = {"機車": 0.0951, "汽車": 0.115, "貨車": 2.71}
 def load_data_from_excel(file_bytes: bytes) -> pd.DataFrame:
     try:
         df = pd.read_excel(BytesIO(file_bytes), engine="openpyxl")
-        if df.shape[1] < 4:
-            raise ValueError("Excel 欄位太少：至少 4 欄（編號、品名、碳足跡、宣告單位）。")
+        
+        # 確認欄位名稱
+        st.write("Excel 欄位名稱：", df.columns)
 
-        df = df.iloc[:, :4].copy()
-        df.columns = ["code", "product_name", "product_carbon_footprint_data", "declared_unit"]
+        if df.shape[1] < 3:
+            raise ValueError("Excel 欄位太少：至少 3 欄（族群、產品名稱、碳足跡）。")
 
-        df["code"] = df["code"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        # 只保留前三欄：族群、產品名稱、碳足跡
+        df = df.iloc[:, :3].copy()
+        df.columns = ["group", "product_name", "product_carbon_footprint_data"]
+
+        df["group"] = df["group"].astype(str).str.strip()
         df["product_name"] = df["product_name"].astype(str).str.strip()
-        df["declared_unit"] = df["declared_unit"].astype(str).str.strip()
 
         df["cf_gco2e"] = df["product_carbon_footprint_data"].apply(parse_cf_to_g)
         df = df.dropna(subset=["cf_gco2e"]).reset_index(drop=True)
@@ -160,12 +164,12 @@ st.title(APP_TITLE)
 df_all = load_data_from_excel(EXCEL_PATH_DEFAULT)
 
 # 主餐、甜點和包材選擇
-df_food = df_all[df_all["code"] == "1"].copy() 
-df_dessert = df_all[df_all["code"] == "3"].copy()
-df_packaging = df_all[df_all["code"].isin(["4-1", "4-2", "4-3", "4-4", "4-5", "4-6"])].copy()
+df_food = df_all[df_all["group"] == "1"].copy() 
+df_dessert = df_all[df_all["group"] == "3"].copy()
+df_packaging = df_all[df_all["group"].isin(["4-1", "4-2", "4-3", "4-4", "4-5", "4-6"])].copy()
 
 if len(df_food) == 0:
-    st.error("Excel 裡找不到 code=1 的食材。請確認『編號』欄有 1。")
+    st.error("Excel 裡找不到 code=1 的食材。請確認『族群』欄有 1。")
     st.stop()
 
 # 合併階段

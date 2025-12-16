@@ -62,16 +62,11 @@ def label_with_cf(row):
     return f"{row['產品名稱']} ({row['碳足跡(kg)']:.3f} kgCO₂e)"
 
 def create_pie_chart(data, labels):
-    # 檢查是否有 None 或 NaN 值
-    if any(x is None or pd.isna(x) for x in data):
-        st.error("圓餅圖的數據包含無效值（None 或 NaN）。請檢查數據。")
-        return
-    
-    # 直接處理傳入的數據，避免更改外部變量
-    processed_data = [float(x) if isinstance(x, (int, float)) else 0.0 for x in data]
+    # 確保數據有效，並處理無效值
+    data = [float(x) if isinstance(x, (int, float)) else 0.0 for x in data]
     
     fig, ax = plt.subplots()
-    ax.pie(processed_data, labels=labels, autopct='%1.1f%%', startangle=90)
+    ax.pie(data, labels=labels, autopct='%1.1f%%', startangle=90)
     ax.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
     st.pyplot(fig)
 
@@ -290,6 +285,7 @@ if st.button("📤 送出並寫入 Google Sheet（全班彙整）", use_containe
     except Exception as e:
         st.error("寫入失敗：請檢查 ①服務帳戶是否已被共用為「編輯者」 ② spreadsheet_id / worksheet_name 是否正確 ③ Sheets API 是否已啟用。")
         st.exception(e)
+
 
 
 

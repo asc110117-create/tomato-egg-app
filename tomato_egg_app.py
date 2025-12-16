@@ -1,3 +1,38 @@
+def append_result_to_google_sheet(row):
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            st.secrets["google_service_account"], scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+        service = build("sheets", "v4", credentials=credentials)
+        sheet_id = st.secrets["google_sheet"]["google_sheet_id"]
+        range_name = "工作表1!A1"
+        values = [[
+            row['timestamp'],
+            row['student_name'],
+            row['visitor_id'],
+            row['device_id'],
+            row['test_number'],
+            row['total_kgco2e'],
+            row['food_kgco2e'],
+            row['cooking_kgco2e'],
+            row['drink_name'],
+            row['drink_kgCO2e'],
+            row['dessert_selected'],
+            row['packaging_selected']
+        ]]
+        body = {'values': values}
+        
+        # Print to verify
+        st.write(f"Appending to Google Sheet with ID: {sheet_id}")
+        response = service.spreadsheets().values().append(
+            spreadsheetId=sheet_id,
+            range=range_name,
+            valueInputOption="RAW",
+            body=body
+        ).execute()
+        st.write("Data appended successfully!")
+    except Exception as e:
+        st.error(f"Error in appending data: {str(e)}")
 
 import random
 import pandas as pd
@@ -239,6 +274,7 @@ if st.button("📤 送出並寫入 Google Sheet（全班彙整）", use_containe
     except Exception as e:
         st.error("寫入失敗：請檢查 ①服務帳戶是否已被共用為「編輯者」 ② spreadsheet_id / worksheet_name 是否正確 ③ Sheets API 是否已啟用。")
         st.exception(e)
+
 
 
 

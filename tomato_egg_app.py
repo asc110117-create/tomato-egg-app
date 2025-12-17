@@ -246,23 +246,8 @@ def pick_one(df: pd.DataFrame, code_value: str) -> dict:
 
 
 # =========================
-# =========================
 # 6) Google Sheet（可選）
 #    沒設定 secrets 也不會壞，只是按鈕會顯示無法寫入
-SHEET_NAME = "1115"  # 請將其改為您的 Google Sheet 文件名稱
-if sheets_available():
-    if st.button("📤 送出並寫入 Google Sheet（全班彙整）", use_container_width=True):
-        try:
-            append_result_to_google_sheet(SHEET_NAME, row)
-            st.success("已成功寫入 Google Sheet ✅")
-        except Exception as e:
-            st.error("寫入失敗：請確認（1）服務帳戶已共用該 Sheet 為編輯者（2）Sheet 檔名正確。")
-            st.exception(e)
-else:
-    st.warning("尚未設定 Google Sheet 憑證（st.secrets['gcp_service_account']）。你仍可下載 CSV。")
-
-
-
 # =========================
 def sheets_available() -> bool:
     try:
@@ -301,6 +286,7 @@ def append_result_to_google_sheet(sheet_name: str, row: dict):
         ws.append_row(values)
     else:
         ws.append_row(list(row.values()))
+
 
 # =========================
 # 7) Session 初始化
@@ -360,7 +346,6 @@ if st.session_state.origin["lat"] is None and geo_lat is not None and geo_lng is
     st.session_state.origin = {"lat": geo_lat, "lng": geo_lng}
 
 
-# =========================
 # 9) 母頁（報到）
 # =========================
 st.title(APP_TITLE)
@@ -368,38 +353,40 @@ st.title(APP_TITLE)
 if st.session_state.page == "home":
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("🏷️ 報到與入場")
-    st.write("請輸入您的預約號碼（學號＋姓名）。")
+    st.write("請輸入您的姓名。")
 
-    visitor_id = st.text_input(
-        "您的預約號碼：",
-        value=st.session_state.visitor_id,
-        placeholder="例如：BEE114108陳依萱",
+    # 輸入姓名
+    user_name = st.text_input(
+        "您的姓名：",
+        value=st.session_state.student_name,
+        placeholder="例如：黃文瑜",
     )
 
     colA, colB = st.columns([1, 1])
     with colA:
         if st.button("確認報到", use_container_width=True):
-            st.session_state.visitor_id = visitor_id.strip()
+            st.session_state.student_name = user_name.strip()
 
     with colB:
         if st.button("直接開始（跳過）", use_container_width=True):
-            if not st.session_state.visitor_id:
-                st.session_state.visitor_id = "訪客"
-            st.session_state.student_name = st.session_state.visitor_id
+            if not st.session_state.student_name:
+                st.session_state.student_name = "訪客"
             st.session_state.page = "main"
             st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    vid = st.session_state.visitor_id.strip()
-    if vid:
-        if vid in VALID_IDS:
-            name = VALID_IDS[vid]["name"]
-            st.session_state.student_name = name
-            st.success(f"{name}您好，報到成功 ✅")
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.write(
-                f"""
+    # 根據姓名顯示報到成功訊息
+    if st.session_state.student_name:
+        st.success(f"{st.session_state.student_name} 您好，報到成功 ✅")
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.write(
+            f"""
+{st.session_state.student_name} 您好，歡迎來到「碳足跡觀光工廠」！
+"""
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
 {name}您好，歡迎來到「碳足跡觀光工廠」！
 
 **第一階段**
@@ -1122,5 +1109,3 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
-
-

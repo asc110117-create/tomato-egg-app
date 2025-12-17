@@ -599,8 +599,7 @@ if st.session_state.stage == 1:
     
     ef = float(st.session_state.get("ef_final", 0.0))
     round_trip = bool(st.session_state.get("round_trip", True))
-    
-        round_trip = bool(st.session_state.get("round_trip", True))
+
 
     # 搜尋分店
     st.markdown("#### 🔎 搜尋附近分店（例如：全聯）")
@@ -1090,6 +1089,7 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+
 
 
 

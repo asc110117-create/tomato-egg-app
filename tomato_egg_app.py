@@ -569,7 +569,7 @@ if st.session_state.stage == 1:
         if st.button("✅ 將此點設為起點", use_container_width=True):
             st.session_state.origin = {"lat": float(clicked_origin["lat"]), "lng": float(clicked_origin["lng"])}
             st.rerun()
-# 交通方式排放係數設定（根據您提供的數據）
+    # 交通方式排放係數設定（如之前所述）
     EF_MAP = {
         "走路": 0.0,                     # 走路排放係數（每人公里）
         "機車": 9.51e-2,                 # 機車排放係數（每人公里）
@@ -579,69 +579,73 @@ if st.session_state.stage == 1:
     
     colA, colB, colC = st.columns([1.1, 1.2, 1.0])
     
+    # 1) 交通方式選擇
     with colA:
-        st.selectbox(
+        transport_mode = st.selectbox(
             "交通方式",
             list(EF_MAP.keys()),
             index=list(EF_MAP.keys()).index(st.session_state.get("transport_mode", "汽車（汽油）")),
             key="transport_mode",
         )
     
+    # 2) 交通排放係數顯示
     with colB:
         mode = st.session_state["transport_mode"]
-        if EF_MAP[mode] == 0.0:
-            st.number_input("排放係數（kgCO₂e/km）", min_value=0.0, value=0.0, step=0.01, disabled=True, key="ef_final")
+        if mode == "走路":
+            ef_value = 0.0  # 走路沒有排放
+        elif mode == "機車":
+            ef_value = 9.51e-2  # 機車排放係數
+        elif mode == "汽車（汽油）":
+            ef_value = 1.15e-1  # 汽車（汽油）排放係數
+        elif mode == "3.49噸低溫貨車服務":
+            ef_value = 2.71e+0  # 低溫貨車服務排放係數
         else:
-            st.number_input("排放係數（kgCO₂e/km，可微調）", min_value=0.0, value=float(EF_MAP[mode]), step=0.01, key="ef_final")
+            ef_value = 0.0
     
+        # 顯示排放係數
+        st.number_input(
+            "排放係數（kgCO₂e/km）",
+            min_value=0.0,
+            value=ef_value,
+            step=0.01,
+            key="ef_final",
+            disabled=True  # 禁用輸入，僅顯示計算結果
+        )
+    
+    # 3) 來回選項
     with colC:
         st.checkbox("算來回（去＋回）", value=bool(st.session_state.get("round_trip", True)), key="round_trip")
     
-    ef = float(st.session_state.get("ef_final", 0.0))
-    round_trip = bool(st.session_state.get("round_trip", True))
-
-
-    # 搜尋分店
-    st.markdown("#### 🔎 搜尋附近分店（例如：全聯）")
-    q = st.text_input("搜尋關鍵字", value="全聯", key="place_query")
-
-    s1, s2 = st.columns([1, 1])
-    with s1:
-        if st.button("🔍 搜尋附近分店（最近 5 家）", use_container_width=True):
-            if st.session_state.origin["lat"] is None or st.session_state.origin["lng"] is None:
-                st.error("尚未設定起點，無法搜尋附近分店。請先設定起點。")
-            else:
-                try:
-                    o_lat = st.session_state.origin["lat"]
-                    o_lng = st.session_state.origin["lng"]
-
-                    raw = nominatim_search_nearby(q, o_lat, o_lng, radius_km=5, limit=60)
-                    if len(raw) < 5:
-                        raw = nominatim_search_nearby(q, o_lat, o_lng, radius_km=10, limit=60)
-
-                    results = []
-                    for r in raw:
-                        d = haversine_km(o_lat, o_lng, r["lat"], r["lng"])
-                        rr = dict(r)
-                        rr["dist_km"] = d
-                        results.append(rr)
-
-                    results.sort(key=lambda x: x["dist_km"])
-                    st.session_state.search = results[:5]
-                    st.session_state.decision = 0
-                    st.rerun()
-                except Exception as e:
-                    st.session_state.search = []
-                    st.session_state.decision = 0
-                    st.error("搜尋失敗（可能是服務限制或網路）。請換關鍵字或稍後再試。")
-                    st.exception(e)
-
-    with s2:
-        if st.button("🧹 清空搜尋結果/已選分店", use_container_width=True):
-            st.session_state.search = []
-            st.session_state.stores = []
-            st.session_state.decision = 0
-            st.rerun()
+    # 4) 取得距離（假設用戶已選擇分店，並且有距離資訊）
+    # 假設這是距離，通常會從搜尋結果或預先設定的地理數據中獲得
+    distance_km = 10.0  # 例如，這是從地圖選擇的距離（單程），假設值為 10 公里
+    
+    # 5) 產品碳足跡計算（假設每個產品有對應的重量）
+    # 假設有一個產品列表，每個產品有碳足跡和重量
+    products = [
+        {"product_name": "產品1", "cf_kgco2e": 0.2, "weight_kg": 1.5},
+        {"product_name": "產品2", "cf_kgco2e": 0.3, "weight_kg": 2.0},
+    ]
+    
+    # 計算所有產品的總碳足跡
+    total_product_cf = sum([product["cf_kgco2e"] * product["weight_kg"] for product in products])
+    
+    # 6) 交通碳足跡計算
+    ef = float(st.session_state.get("ef_final", ef_value))  # 排放係數
+    round_trip = bool(st.session_state.get("round_trip", True))  # 是否來回
+    trip_distance = distance_km * (2 if round_trip else 1)  # 根據是否來回計算距離
+    
+    # 交通碳足跡：排放係數 × 距離 × 來回次數
+    transport_cf = ef * trip_distance
+    
+    # 7) 最終碳足跡（產品碳足跡 + 交通碳足跡）
+    total_cf = total_product_cf + transport_cf
+    
+    # 顯示碳足跡
+    st.markdown("### 碳足跡計算結果")
+    st.write(f"產品碳足跡總計：{total_product_cf:.3f} kgCO₂e")
+    st.write(f"交通碳足跡：{transport_cf:.3f} kgCO₂e")
+    st.write(f"總碳足跡：{total_cf:.3f} kgCO₂e")
 
     # 地圖點選分店
     st.markdown("#### 🗺️ 地圖（點橘色分店 marker 做決策）")
@@ -1089,6 +1093,7 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+
 
 
 

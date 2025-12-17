@@ -246,6 +246,7 @@ def pick_one(df: pd.DataFrame, code_value: str) -> dict:
 
 
 # =========================
+# =========================
 # 6) Google Sheet（可選）
 #    沒設定 secrets 也不會壞，只是按鈕會顯示無法寫入
 # =========================
@@ -286,7 +287,6 @@ def append_result_to_google_sheet(sheet_name: str, row: dict):
         ws.append_row(values)
     else:
         ws.append_row(list(row.values()))
-
 
 # =========================
 # 7) Session 初始化
@@ -1108,3 +1108,4 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+

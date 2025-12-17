@@ -249,6 +249,20 @@ def pick_one(df: pd.DataFrame, code_value: str) -> dict:
 # =========================
 # 6) Google Sheet（可選）
 #    沒設定 secrets 也不會壞，只是按鈕會顯示無法寫入
+SHEET_NAME = "1115"  # 請將其改為您的 Google Sheet 文件名稱
+if sheets_available():
+    if st.button("📤 送出並寫入 Google Sheet（全班彙整）", use_container_width=True):
+        try:
+            append_result_to_google_sheet(SHEET_NAME, row)
+            st.success("已成功寫入 Google Sheet ✅")
+        except Exception as e:
+            st.error("寫入失敗：請確認（1）服務帳戶已共用該 Sheet 為編輯者（2）Sheet 檔名正確。")
+            st.exception(e)
+else:
+    st.warning("尚未設定 Google Sheet 憑證（st.secrets['gcp_service_account']）。你仍可下載 CSV。")
+
+
+
 # =========================
 def sheets_available() -> bool:
     try:
@@ -1108,4 +1122,5 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+
 

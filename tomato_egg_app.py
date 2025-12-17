@@ -347,64 +347,39 @@ if st.session_state.origin["lat"] is None and geo_lat is not None and geo_lng is
 
 
 # =========================
-# 9) 母頁（報到）
+# =========================
+# 9) 母頁：報到（改為輸入姓名並記錄測試次數）
 # =========================
 st.title(APP_TITLE)
 
 if st.session_state.page == "home":
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("🏷️ 報到與入場")
-    st.write("請輸入您的預約號碼（學號＋姓名）。")
+    st.write("請輸入您的姓名。")
 
-    visitor_id = st.text_input(
-        "您的預約號碼：",
-        value=st.session_state.visitor_id,
-        placeholder="例如：BEE114108陳依萱",
+    # 記錄測試次數
+    if "test_count" not in st.session_state:
+        st.session_state.test_count = 1  # 初始化測試次數為1
+    else:
+        st.session_state.test_count += 1  # 每次進入頁面自動加1
+
+    # 輸入姓名
+    user_name = st.text_input(
+        "請輸入您的姓名：",
+        value=st.session_state.student_name,
+        placeholder="例如：黃文瑜",
     )
 
-    colA, colB = st.columns([1, 1])
-    with colA:
-        if st.button("確認報到", use_container_width=True):
-            st.session_state.visitor_id = visitor_id.strip()
-
-    with colB:
-        if st.button("直接開始（跳過）", use_container_width=True):
-            if not st.session_state.visitor_id:
-                st.session_state.visitor_id = "訪客"
-            st.session_state.student_name = st.session_state.visitor_id
+    if st.button("確認", use_container_width=True):
+        if user_name:
+            st.session_state.student_name = user_name.strip()
+            st.success(f"您好，{st.session_state.student_name}！這是您第 {st.session_state.test_count} 次測試。")
             st.session_state.page = "main"
             st.rerun()
+        else:
+            st.warning("請輸入姓名以確認報到。")
 
     st.markdown("</div>", unsafe_allow_html=True)
-
-    vid = st.session_state.visitor_id.strip()
-    if vid:
-        if vid in VALID_IDS:
-            name = VALID_IDS[vid]["name"]
-            st.session_state.student_name = name
-            st.success(f"{name}您好，報到成功 ✅")
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.write(
-                f"""
-{name}您好，歡迎來到「碳足跡觀光工廠」！
-
-**第一階段**
-- 抽 3 項主餐食材
-- 每道餐選擇水煮/煎炸（系統配對油/水）
-- 飲料可選
-- 採買交通：搜尋附近分店 → 地圖點選 → 確認後加入計算
-
-**第二階段**
-- 甜點：隨機 5 種，複選 2 種
-- 餐具/包材：可不選、可複選
-"""
-            )
-            if st.button("🍴 開始", use_container_width=True):
-                st.session_state.page = "main"
-                st.rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            st.warning("目前此預約號碼不在名單內（可按「直接開始（跳過）」當訪客進入）。")
     st.stop()
 
 
@@ -1108,3 +1083,4 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+

@@ -570,37 +570,37 @@ if st.session_state.stage == 1:
             st.session_state.origin = {"lat": float(clicked_origin["lat"]), "lng": float(clicked_origin["lng"])}
             st.rerun()
 # 交通方式排放係數設定（根據您提供的數據）
-EF_MAP = {
-    "走路": 0.0,                     # 走路排放係數（每人公里）
-    "機車": 9.51e-2,                 # 機車排放係數（每人公里）
-    "汽車（汽油）": 1.15e-1,         # 汽車（汽油）排放係數（每人公里）
-    "3.49噸低溫貨車服務": 2.71e+0,   # 低溫貨車服務排放係數（每噸公里）
-}
-
-colA, colB, colC = st.columns([1.1, 1.2, 1.0])
-
-with colA:
-    st.selectbox(
-        "交通方式",
-        list(EF_MAP.keys()),
-        index=list(EF_MAP.keys()).index(st.session_state.get("transport_mode", "汽車（汽油）")),
-        key="transport_mode",
-    )
-
-with colB:
-    mode = st.session_state["transport_mode"]
-    if EF_MAP[mode] == 0.0:
-        st.number_input("排放係數（kgCO₂e/km）", min_value=0.0, value=0.0, step=0.01, disabled=True, key="ef_final")
-    else:
-        st.number_input("排放係數（kgCO₂e/km，可微調）", min_value=0.0, value=float(EF_MAP[mode]), step=0.01, key="ef_final")
-
-with colC:
-    st.checkbox("算來回（去＋回）", value=bool(st.session_state.get("round_trip", True)), key="round_trip")
-
-ef = float(st.session_state.get("ef_final", 0.0))
-round_trip = bool(st.session_state.get("round_trip", True))
-
+    EF_MAP = {
+        "走路": 0.0,                     # 走路排放係數（每人公里）
+        "機車": 9.51e-2,                 # 機車排放係數（每人公里）
+        "汽車（汽油）": 1.15e-1,         # 汽車（汽油）排放係數（每人公里）
+        "3.49噸低溫貨車服務": 2.71e+0,   # 低溫貨車服務排放係數（每噸公里）
+    }
+    
+    colA, colB, colC = st.columns([1.1, 1.2, 1.0])
+    
+    with colA:
+        st.selectbox(
+            "交通方式",
+            list(EF_MAP.keys()),
+            index=list(EF_MAP.keys()).index(st.session_state.get("transport_mode", "汽車（汽油）")),
+            key="transport_mode",
+        )
+    
+    with colB:
+        mode = st.session_state["transport_mode"]
+        if EF_MAP[mode] == 0.0:
+            st.number_input("排放係數（kgCO₂e/km）", min_value=0.0, value=0.0, step=0.01, disabled=True, key="ef_final")
+        else:
+            st.number_input("排放係數（kgCO₂e/km，可微調）", min_value=0.0, value=float(EF_MAP[mode]), step=0.01, key="ef_final")
+    
+    with colC:
+        st.checkbox("算來回（去＋回）", value=bool(st.session_state.get("round_trip", True)), key="round_trip")
+    
+    ef = float(st.session_state.get("ef_final", 0.0))
     round_trip = bool(st.session_state.get("round_trip", True))
+    
+        round_trip = bool(st.session_state.get("round_trip", True))
 
     # 搜尋分店
     st.markdown("#### 🔎 搜尋附近分店（例如：全聯）")
@@ -1090,5 +1090,6 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+
 
 

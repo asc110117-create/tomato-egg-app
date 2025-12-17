@@ -596,44 +596,62 @@ if st.session_state.stage == 1:
     origin_lat = 24.1477  # 預設座標（例如台中教育大學）
     origin_lng = 120.6736
     
-    # 使用 Nominatim API 來搜尋附近的分店（例如全聯）
-    def nominatim_search_nearby(query, lat, lng, radius_km=5, limit=5):
-        if not query.strip():
+   import requests
+from time import sleep
+
+def nominatim_search_nearby(query, lat, lng, radius_km=5, limit=5, retries=3, timeout=20):
+    if not query.strip():
+        return []
+
+    lat_delta = radius_km / 111.0
+    lng_delta = radius_km / (111.0 * max(0.1, math.cos(math.radians(lat))))
+    viewbox = f"{lng-lng_delta},{lat+lat_delta},{lng+lng_delta},{lat-lat_delta}"
+
+    params = {
+        "q": query,
+        "format": "jsonv2",
+        "limit": str(limit),
+        "addressdetails": 1,
+        "viewbox": viewbox,
+        "bounded": 1,
+    }
+    headers = {
+        "User-Agent": "carbon-footprint-edu-app/1.0",
+        "Accept-Language": "zh-TW,zh,en",
+    }
+
+    for attempt in range(retries):
+        try:
+            # 發送請求，並增加超時時間
+            r = requests.get("https://nominatim.openstreetmap.org/search", params=params, headers=headers, timeout=timeout)
+            r.raise_for_status()  # 檢查請求是否成功
+            data = r.json()
+
+            out = []
+            for x in data:
+                display_name = x.get("display_name", "")
+                out.append(
+                    {
+                        "display_name": display_name,
+                        "name": (display_name.split(",")[0] if display_name else "").strip(),
+                        "lat": float(x["lat"]),
+                        "lng": float(x["lon"]),
+                    }
+                )
+            return out
+        except requests.exceptions.ReadTimeout as e:
+            if attempt < retries - 1:
+                # 等待一段時間後重試
+                sleep(2)
+                continue
+            else:
+                st.error(f"請求超時，無法取得資料：{e}")
+                return []
+        except requests.exceptions.RequestException as e:
+            # 捕獲其他錯誤
+            st.error(f"請求發生錯誤：{e}")
             return []
-    
-        lat_delta = radius_km / 111.0
-        lng_delta = radius_km / (111.0 * max(0.1, math.cos(math.radians(lat))))
-        viewbox = f"{lng-lng_delta},{lat+lat_delta},{lng+lng_delta},{lat-lat_delta}"
-    
-        params = {
-            "q": query,
-            "format": "jsonv2",
-            "limit": str(limit),
-            "addressdetails": 1,
-            "viewbox": viewbox,
-            "bounded": 1,
-        }
-        headers = {
-            "User-Agent": "carbon-footprint-edu-app/1.0",
-            "Accept-Language": "zh-TW,zh,en",
-        }
-    
-        r = requests.get("https://nominatim.openstreetmap.org/search", params=params, headers=headers, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-    
-        out = []
-        for x in data:
-            display_name = x.get("display_name", "")
-            out.append(
-                {
-                    "display_name": display_name,
-                    "name": (display_name.split(",")[0] if display_name else "").strip(),
-                    "lat": float(x["lat"]),
-                    "lng": float(x["lon"]),
-                }
-            )
-        return out
+
     
     # 搜尋最近的 5 個全聯（或其他關鍵字）
     stores = nominatim_search_nearby("全聯", origin_lat, origin_lng, radius_km=5, limit=5)
@@ -1018,6 +1036,7 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+
 
 
 

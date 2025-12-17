@@ -532,44 +532,7 @@ if st.session_state.stage == 1:
     elif st.session_state.drink_mode_state == "隨機生成飲料" and len(df_drink) == 0:
         st.warning("找不到 code=2 的飲料資料，飲料目前固定為：不喝飲料。")
 
-    # =========================
-    # 交通：採買地點（定位中心 + 地圖點分店）
-    # =========================
-    st.markdown("### 🧭 採買交通（以你的定位/你設定的起點為中心）")
-    st.caption("若定位被拒絕：可用手動座標或在地圖點一下當起點。")
-
-    origin_lat = st.session_state.origin["lat"]
-    origin_lng = st.session_state.origin["lng"]
-
-    if origin_lat is not None and origin_lng is not None:
-        st.success(f"📍 已取得起點：{origin_lat:.6f}, {origin_lng:.6f}")
-    else:
-        st.warning("目前拿不到定位或尚未設定起點。")
-
-    st.markdown("#### ① 手動輸入起點座標（lat/lng）")
-    colO1, colO2, colO3 = st.columns([1, 1, 1])
-    with colO1:
-        lat_in = st.number_input("緯度 lat", value=float(origin_lat) if origin_lat else NTSU_LAT, format="%.6f")
-    with colO2:
-        lng_in = st.number_input("經度 lng", value=float(origin_lng) if origin_lng else NTSU_LNG, format="%.6f")
-    with colO3:
-        if st.button("✅ 使用此座標當起點", use_container_width=True):
-            st.session_state.origin = {"lat": float(lat_in), "lng": float(lng_in)}
-            st.rerun()
-
-    st.markdown("#### ② 或在地圖上點一下，把「點的位置」當起點")
-    fallback_center = [origin_lat if origin_lat else NTSU_LAT, origin_lng if origin_lng else NTSU_LNG]
-    m_origin = folium.Map(location=fallback_center, zoom_start=13)
-    folium.Marker(fallback_center, tooltip="地圖中心（點地圖可改起點）").add_to(m_origin)
-    origin_map_state = st_folium(m_origin, height=320, use_container_width=True, key="origin_map")
-
-    clicked_origin = origin_map_state.get("last_clicked")
-    if clicked_origin:
-        st.info(f"你點到：{clicked_origin['lat']:.6f}, {clicked_origin['lng']:.6f}")
-        if st.button("✅ 將此點設為起點", use_container_width=True):
-            st.session_state.origin = {"lat": float(clicked_origin["lat"]), "lng": float(clicked_origin["lng"])}
-            st.rerun()
-    # 交通方式排放係數設定（如之前所述）
+        # 交通方式排放係數設定（根據您提供的數據）
     EF_MAP = {
         "走路": 0.0,                     # 走路排放係數（每人公里）
         "機車": 9.51e-2,                 # 機車排放係數（每人公里）
@@ -592,7 +555,7 @@ if st.session_state.stage == 1:
     with colB:
         mode = st.session_state["transport_mode"]
         if mode == "走路":
-            ef_value = 0.0  # 走路沒有排放
+            ef_value = None  # 走路不顯示排放係數
         elif mode == "機車":
             ef_value = 9.51e-2  # 機車排放係數
         elif mode == "汽車（汽油）":
@@ -600,37 +563,27 @@ if st.session_state.stage == 1:
         elif mode == "3.49噸低溫貨車服務":
             ef_value = 2.71e+0  # 低溫貨車服務排放係數
         else:
-            ef_value = 0.0
+            ef_value = None
     
-        # 顯示排放係數
-        st.number_input(
-            "排放係數（kgCO₂e/km）",
-            min_value=0.0,
-            value=ef_value,
-            step=0.01,
-            key="ef_final",
-            disabled=True  # 禁用輸入，僅顯示計算結果
-        )
+        if ef_value is not None:  # 只顯示非 0 的排放係數
+            st.number_input(
+                "排放係數（kgCO₂e/km）",
+                min_value=0.0,
+                value=ef_value,
+                step=0.01,
+                key="ef_final",
+                disabled=True  # 禁用輸入，僅顯示計算結果
+            )
     
     # 3) 來回選項
     with colC:
         st.checkbox("算來回（去＋回）", value=bool(st.session_state.get("round_trip", True)), key="round_trip")
     
     # 4) 取得距離（假設用戶已選擇分店，並且有距離資訊）
-    # 假設這是距離，通常會從搜尋結果或預先設定的地理數據中獲得
+    # 假設這是距離，通常會從用戶選擇的分店位置來計算，這裡是範例數據
     distance_km = 10.0  # 例如，這是從地圖選擇的距離（單程），假設值為 10 公里
     
-    # 5) 產品碳足跡計算（假設每個產品有對應的重量）
-    # 假設有一個產品列表，每個產品有碳足跡和重量
-    products = [
-        {"product_name": "產品1", "cf_kgco2e": 0.2, "weight_kg": 1.5},
-        {"product_name": "產品2", "cf_kgco2e": 0.3, "weight_kg": 2.0},
-    ]
-    
-    # 計算所有產品的總碳足跡
-    total_product_cf = sum([product["cf_kgco2e"] * product["weight_kg"] for product in products])
-    
-    # 6) 交通碳足跡計算
+    # 5) 交通碳足跡計算
     ef = float(st.session_state.get("ef_final", ef_value))  # 排放係數
     round_trip = bool(st.session_state.get("round_trip", True))  # 是否來回
     trip_distance = distance_km * (2 if round_trip else 1)  # 根據是否來回計算距離
@@ -638,142 +591,114 @@ if st.session_state.stage == 1:
     # 交通碳足跡：排放係數 × 距離 × 來回次數
     transport_cf = ef * trip_distance
     
-    # 7) 最終碳足跡（產品碳足跡 + 交通碳足跡）
-    total_cf = total_product_cf + transport_cf
+    # 6) 地圖搜尋附近分店，顯示最近的 5 個分店
+    # 假設使用者已經設定了起點位置
+    origin_lat = 24.1477  # 預設座標（例如台中教育大學）
+    origin_lng = 120.6736
     
-    # 顯示碳足跡
-    st.markdown("### 碳足跡計算結果")
-    st.write(f"產品碳足跡總計：{total_product_cf:.3f} kgCO₂e")
-    st.write(f"交通碳足跡：{transport_cf:.3f} kgCO₂e")
-    st.write(f"總碳足跡：{total_cf:.3f} kgCO₂e")
-
-    # 地圖點選分店
-    st.markdown("#### 🗺️ 地圖（點橘色分店 marker 做決策）")
-
-    transport_cf = 0.0
-    transport_km = 0.0
-
-    if st.session_state.origin["lat"] is None or st.session_state.origin["lng"] is None:
-        st.warning("尚未設定起點，因此目前無法顯示附近分店地圖。")
-    else:
-        o_lat = st.session_state.origin["lat"]
-        o_lng = st.session_state.origin["lng"]
-
-        m = folium.Map(location=[o_lat, o_lng], zoom_start=14)
-        folium.Marker([o_lat, o_lng], tooltip="起點", icon=folium.Icon(color="blue", icon="user")).add_to(m)
-
-        # 已確認分店（綠色）
-        for p in st.session_state.stores:
-            folium.Marker(
-                [p["lat"], p["lng"]],
-                tooltip=f"已確認：{p['name']}",
-                popup=p.get("display_name", p["name"]),
-                icon=folium.Icon(color="green", icon="shopping-cart"),
-            ).add_to(m)
-
-        # 搜尋到的 5 家（橘色＋編號）
-        bounds = [[o_lat, o_lng]]
-        for i, r in enumerate(st.session_state.search, start=1):
-            bounds.append([r["lat"], r["lng"]])
-
-            folium.Marker(
-                [r["lat"], r["lng"]],
-                tooltip=f"{i}. {r['name']}（{r['dist_km']:.2f} km）",
-                popup=r["display_name"],
-                icon=folium.Icon(color="orange", icon="info-sign"),
-            ).add_to(m)
-
-            folium.Marker(
-                [r["lat"], r["lng"]],
-                icon=folium.DivIcon(
-                    html=f"""
-                    <div style="
-                        background: rgba(255,255,255,0.92);
-                        border: 2px solid #ff9800;
-                        border-radius: 999px;
-                        width: 26px; height: 26px;
-                        text-align: center;
-                        line-height: 22px;
-                        font-weight: 700;
-                        font-size: 14px;
-                    ">{i}</div>
-                    """
-                ),
-            ).add_to(m)
-
-        if len(bounds) >= 2:
-            m.fit_bounds(bounds)
-
-        map_state = st_folium(m, height=420, use_container_width=True, key="store_map")
-
-        def nearest_store_index(clicked_lat, clicked_lng, stores):
-            best_i = None
-            best_d = 10**9
-            for i, s in enumerate(stores):
-                d = haversine_km(clicked_lat, clicked_lng, s["lat"], s["lng"])
-                if d < best_d:
-                    best_d = d
-                    best_i = i
-            return best_i, best_d
-
-        st.markdown("##### 🧠 做決策：點橘色分店 → 再按確認加入計算")
-
-        if not st.session_state.search:
-            st.warning("尚未搜尋到附近分店。請先按『搜尋附近分店（最近 5 家）』。")
-        else:
-            clicked = map_state.get("last_object_clicked")  # 點 marker 才會有
-            if clicked:
-                ci, cd = nearest_store_index(clicked["lat"], clicked["lng"], st.session_state.search)
-                # 閾值避免點空白也亂選（0.25 km 內算同一點）
-                if ci is not None and cd <= 0.25:
-                    st.session_state.decision = ci
-
-            picked = st.session_state.search[int(st.session_state.decision)]
-            trip_km_preview = picked["dist_km"] * (2 if round_trip else 1)
-            transport_cf_preview = trip_km_preview * ef
-
-            st.info(
-                f"目前選擇：**{picked['name']}**\n\n"
-                f"- 單程距離：約 **{picked['dist_km']:.2f} km**\n"
-                f"- 里程（{'來回' if round_trip else '單程'}）：約 **{trip_km_preview:.2f} km**\n"
-                f"- 交通方式：**{st.session_state['transport_mode']}**\n"
-                f"- 交通碳足跡（預估）：**{transport_cf_preview:.3f} kgCO₂e**"
+    # 使用 Nominatim API 來搜尋附近的分店（例如全聯）
+    def nominatim_search_nearby(query, lat, lng, radius_km=5, limit=5):
+        if not query.strip():
+            return []
+    
+        lat_delta = radius_km / 111.0
+        lng_delta = radius_km / (111.0 * max(0.1, math.cos(math.radians(lat))))
+        viewbox = f"{lng-lng_delta},{lat+lat_delta},{lng+lng_delta},{lat-lat_delta}"
+    
+        params = {
+            "q": query,
+            "format": "jsonv2",
+            "limit": str(limit),
+            "addressdetails": 1,
+            "viewbox": viewbox,
+            "bounded": 1,
+        }
+        headers = {
+            "User-Agent": "carbon-footprint-edu-app/1.0",
+            "Accept-Language": "zh-TW,zh,en",
+        }
+    
+        r = requests.get("https://nominatim.openstreetmap.org/search", params=params, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+    
+        out = []
+        for x in data:
+            display_name = x.get("display_name", "")
+            out.append(
+                {
+                    "display_name": display_name,
+                    "name": (display_name.split(",")[0] if display_name else "").strip(),
+                    "lat": float(x["lat"]),
+                    "lng": float(x["lon"]),
+                }
             )
-
-            if st.button("✅ 確認此分店（納入計算）", use_container_width=True):
-                st.session_state.stores = [picked]  # 只保留 1 家
-                st.success("已確認分店 ✅")
-                st.rerun()
-
-        # 若已確認分店 → 算交通
-        if st.session_state.stores:
-            picked = st.session_state.stores[0]
-            one_way = haversine_km(o_lat, o_lng, picked["lat"], picked["lng"])
-            transport_km = one_way * (2 if round_trip else 1)
-            transport_cf = transport_km * ef
-
-    # =========================
-    # 第一階段：加總與圖表
-    # =========================
-    food_sum = float(meal_df["cf_kgco2e"].sum())
-
-    cook_sum = 0.0
-    for i in range(len(meal_df)):
-        pick = st.session_state.cook_picks.get(i)
-        cook_sum += float(pick["cf_kgco2e"]) if pick else 0.0
-
-    stage1_total = food_sum + cook_sum + drink_cf + transport_cf
-
-    st.markdown("## ✅ 第一階段結果")
-    st.markdown(
-        f"""
-- **Food（主餐食材）**：`{food_sum:.3f}` kgCO₂e  
-- **Cooking（油/水）**：`{cook_sum:.3f}` kgCO₂e  
-- **Drink（飲料）**：`{drink_cf:.3f}` kgCO₂e（{drink_name}）  
-- **Transport（採買交通）**：`{transport_cf:.3f}` kgCO₂e（{st.session_state.get("transport_mode","-")}；{'來回' if st.session_state.get("round_trip", True) else '單程'}；{transport_km:.2f} km）  
-- **第一階段總計**：✅ **`{stage1_total:.3f}` kgCO₂e**
-"""
-    )
+        return out
+    
+    # 搜尋最近的 5 個全聯（或其他關鍵字）
+    stores = nominatim_search_nearby("全聯", origin_lat, origin_lng, radius_km=5, limit=5)
+    
+    # 顯示地圖
+    import folium
+    from streamlit_folium import st_folium
+    
+    m = folium.Map(location=[origin_lat, origin_lng], zoom_start=14)
+    
+    # 起點標記
+    folium.Marker([origin_lat, origin_lng], tooltip="起點", icon=folium.Icon(color="blue", icon="user")).add_to(m)
+    
+    # 顯示最近的 5 家分店（橘色標記）
+    for i, store in enumerate(stores, 1):
+        folium.Marker(
+            [store["lat"], store["lng"]],
+            tooltip=f"{i}. {store['name']}",
+            popup=store["display_name"],
+            icon=folium.Icon(color="orange", icon="info-sign"),
+        ).add_to(m)
+    
+    # 顯示地圖
+    st_folium(m, height=320, use_container_width=True)
+    
+    # 7) 選擇最近的分店
+    st.markdown("### 🧠 做決策：點橘色分店 → 再按確認加入計算")
+    
+    # 用戶點擊地圖後可以選擇分店
+    map_state = st_folium(m, height=320, use_container_width=True)
+    clicked = map_state.get("last_object_clicked")
+    
+    if clicked:
+        store_name = clicked.get("tooltip", "")
+        st.session_state.selected_store = store_name  # 保存選擇的分店名稱
+        st.success(f"已選擇分店：{store_name}")
+    
+    # 計算交通碳足跡（依選擇的分店距離計算）
+    if 'selected_store' in st.session_state:
+        selected_store = st.session_state.selected_store
+        st.info(f"選擇的分店：{selected_store}")
+    
+    
+        # =========================
+        # 第一階段：加總與圖表
+        # =========================
+        food_sum = float(meal_df["cf_kgco2e"].sum())
+    
+        cook_sum = 0.0
+        for i in range(len(meal_df)):
+            pick = st.session_state.cook_picks.get(i)
+            cook_sum += float(pick["cf_kgco2e"]) if pick else 0.0
+    
+        stage1_total = food_sum + cook_sum + drink_cf + transport_cf
+    
+        st.markdown("## ✅ 第一階段結果")
+        st.markdown(
+            f"""
+    - **Food（主餐食材）**：`{food_sum:.3f}` kgCO₂e  
+    - **Cooking（油/水）**：`{cook_sum:.3f}` kgCO₂e  
+    - **Drink（飲料）**：`{drink_cf:.3f}` kgCO₂e（{drink_name}）  
+    - **Transport（採買交通）**：`{transport_cf:.3f}` kgCO₂e（{st.session_state.get("transport_mode","-")}；{'來回' if st.session_state.get("round_trip", True) else '單程'}；{transport_km:.2f} km）  
+    - **第一階段總計**：✅ **`{stage1_total:.3f}` kgCO₂e**
+    """
+        )
 
     # 圓餅/長條（含比例）
     chart_data = pd.DataFrame(
@@ -1093,6 +1018,7 @@ if st.session_state.stage == 2:
     if st.button("↩️ 回到第一階段（重新調整主餐/交通）", use_container_width=True):
         st.session_state.stage = 1
         st.rerun()
+
 
 
 

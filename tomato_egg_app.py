@@ -359,7 +359,7 @@ if st.session_state.page == "home":
     visitor_id = st.text_input(
         "您的預約號碼：",
         value=st.session_state.visitor_id,
-        placeholder="例如：BEE114108陳依萱",
+        placeholder="例如：24號黃文瑜",
     )
 
     colA, colB = st.columns([1, 1])

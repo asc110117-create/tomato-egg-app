@@ -931,10 +931,10 @@ if st.session_state.stage == 2:
         packaging_sum = float(df_packaging[df_packaging["product_name"].isin(pk_selected)]["cf_kgco2e"].sum()) if pk_selected else 0.0
 
     # -------- 內用 / 帶回台中教育大學 --------
-    st.markdown("### 🏫 內用或帶回台中教育大學")
+    st.markdown("### 🏫 內用或帶回翁子國小")
     dine_mode = st.radio(
         "選擇方式",
-        ["內用", "帶回台中教育大學"],
+        ["內用", "帶回翁子國小"],
         index=0 if st.session_state.dine_mode == "內用" else 1,
         horizontal=True,
         key="dine_mode_radio",
@@ -945,8 +945,8 @@ if st.session_state.stage == 2:
     extra_takeout_cf = 0.0
     extra_takeout_km = 0.0
 
-    if dine_mode == "帶回台中教育大學":
-        st.info("你選擇「帶回」，將計算『分店 → 台中教育大學』的交通碳足跡。")
+    if dine_mode == "帶回翁子國小":
+        st.info("你選擇「帶回」，將計算『分店 → 翁子國小』的交通碳足跡。")
         if not st.session_state.stores:
             st.warning("你尚未在第一階段確認分店，所以無法計算帶回交通。請回第一階段先選分店。")
         else:
@@ -958,7 +958,7 @@ if st.session_state.stage == 2:
 
             m2 = folium.Map(location=[NTSU_LAT, NTSU_LNG], zoom_start=13)
             folium.Marker([picked["lat"], picked["lng"]], tooltip=f"分店：{picked['name']}", icon=folium.Icon(color="green")).add_to(m2)
-            folium.Marker([NTSU_LAT, NTSU_LNG], tooltip="台中教育大學（預設）", icon=folium.Icon(color="blue")).add_to(m2)
+            folium.Marker([NTSU_LAT, NTSU_LNG], tooltip="翁子國小（預設）", icon=folium.Icon(color="blue")).add_to(m2)
             folium.PolyLine([[picked["lat"], picked["lng"]], [NTSU_LAT, NTSU_LNG]], weight=3).add_to(m2)
             st_folium(m2, height=320, use_container_width=True, key="takeout_map")
 
